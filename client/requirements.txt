@@ -1,0 +1,8 @@
+gradio
+langchain-nvidia-ai-endpoints
+langchain-community
+langchain-text-splitters
+langchain-milvus
+langchain-core
+pypdf
+sentence-transformers

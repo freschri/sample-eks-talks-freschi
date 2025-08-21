@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vectorstore
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: milvus
+  namespace: vectorstore
+spec:
+  interval: 24h
+  url: https://zilliztech.github.io/milvus-helm/
+---
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: milvus
+  namespace: vectorstore
+spec:
+  chart:
+    spec:
+      chart: milvus
+      sourceRef:
+        kind: HelmRepository
+        name: milvus
+      version: "4.2.44"
+  interval: 1m0s
+  values:
+    cluster:
+      enabled: false
+    etcd:
+      replicaCount: 1
+    minio:
+      mode: standalone
+    pulsarv3:
+      enabled: false
+    standalone:
+      resources:
+        requests:
+          nvidia.com/gpu: "1"
+        limits:
+          nvidia.com/gpu: "1"
+      nodeSelector:
+        NodeGroupType: gpu-node-pool
+        type: karpenter
+      tolerations:
+      - effect: NoSchedule
+        key: nvidia.com/gpu
+        operator: Exists
