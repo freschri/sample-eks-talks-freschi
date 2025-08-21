@@ -1,4 +1,4 @@
-# Scalable LLM Inference on Kubernetes With NVIDIA NIMS, LangChain, Milvus and FluxCD
+# Scalable LLM Inference on Kubernetes with NVIDIA NIMS, LangChain, Milvus and FluxCD
 
 This is a companion repository to the talk titled _Scalable LLM Inference on Kubernetes With NVIDIA NIMS, LangChain, Milvus and FluxCD_ scheduled at AI_dev on August 28, 2025.
 Code is provided as reference for demo purposes. In a production environment, restrict privileges according to the principle of least privilege.
