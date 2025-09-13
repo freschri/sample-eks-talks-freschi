@@ -11,7 +11,7 @@ spec:
   sourceRef:
     kind: GitRepository
     name: flux-system
-  path: ./workload
+  path: ./llm-inference-nims-langchain-milvus-fluxcd/workload
   prune: true
   wait: true
 ---
@@ -29,7 +29,7 @@ spec:
   sourceRef:
     kind: GitRepository
     name: flux-system
-  path: ./nvidia
+  path: ./llm-inference-nims-langchain-milvus-fluxcd/nvidia
   prune: true
   wait: true
 ---
@@ -45,7 +45,7 @@ spec:
   sourceRef:
     kind: GitRepository
     name: flux-system
-  path: ./infra
+  path: ./llm-inference-nims-langchain-milvus-fluxcd/infra
   prune: true
   wait: true
   postBuild:

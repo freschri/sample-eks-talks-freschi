@@ -1,0 +1,20 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  labels:
+    app.kubernetes.io/name: prometheus-example-app
+    release: kube-prometheus-stack # this is important for PodMonitor to be found
+  name: prometheus-example-app
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus-example-app
+  podMetricsEndpoints:
+  - port: web
+    path: /metrics
+    interval: 5s
+    scheme: http
+  namespaceSelector:
+    matchNames:
+    - workload

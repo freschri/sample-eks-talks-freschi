@@ -1,0 +1,21 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: example-app
+  namespace: workload
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: prometheus-example-app
+  pollingInterval:  2 
+  cooldownPeriod:   30
+  minReplicaCount: 1        
+  maxReplicaCount: 10
+  triggers:
+  - type: prometheus
+    metadata:
+      serverAddress: http://kube-prometheus-stack-prometheus.monitoring:9090
+      metricName: http_requests_total
+      query: sum(http_requests_total)
+      threshold: "2"
