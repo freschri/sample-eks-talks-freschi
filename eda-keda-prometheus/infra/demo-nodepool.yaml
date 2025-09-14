@@ -1,0 +1,35 @@
+apiVersion: karpenter.sh/v1beta1
+kind: NodePool
+metadata:
+  name: demo-workload
+spec:
+  template:
+    metadata:
+      labels:
+        nodepool: demo-workload
+    spec:
+      requirements:
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["on-demand"]
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values: ["c5.large", "c5.xlarge", "c5.2xlarge"]
+      nodeClassRef:
+        apiVersion: karpenter.k8s.aws/v1beta1
+        kind: EC2NodeClass
+        name: default
+      taints:
+        - key: demo-workload
+          value: "true"
+          effect: NoSchedule
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 5m
+    expireAfter: 30m
+  limits:
+    cpu: 1000
+    memory: 1000Gi
