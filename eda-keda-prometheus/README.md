@@ -289,7 +289,7 @@ Critical configuration details:
 Forward traffic to the example application:
 
 ```bash
-kubectl port-forward $(kubectl get pods -l app.kubernetes.io/name=prometheus-example-app -o jsonpath='{.items[0].metadata.name}' -n workload) 3001:8080 -n workload &
+kubectl port-forward svc/prometheus-example-app 3001:8080 -n workload &
 ```
 
 ### 2. Generate Initial Traffic
