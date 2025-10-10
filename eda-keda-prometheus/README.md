@@ -127,7 +127,7 @@ KEDA acts as an adapter, implementing both custom and external metrics APIs. It 
 Check the external metrics API that KEDA exposes:
 
 ```bash
-kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/workload/s0-redis?labelSelector=scaledobject.keda.sh%2Fname%3Dredis-worker-scaler" | jq
+kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/workload/s0-redis-demo_queue?labelSelector=scaledobject.keda.sh%2Fname%3Dredis-worker-scaler" | jq
 ```
 
 Expected output:
@@ -138,7 +138,7 @@ Expected output:
   "metadata": {},
   "items": [
     {
-      "metricName": "s0-redis",
+      "metricName": "s0-redis-demo_queue",
       "metricLabels": null,
       "timestamp": "2025-10-10T07:45:26Z",
       "value": "0"
@@ -147,9 +147,10 @@ Expected output:
 }
 ```
 
-The `s0-redis` naming convention serves multiple purposes:
+The `s0-redis-demo_queue` naming convention serves multiple purposes:
 - **`s0-`**: Prefix indicating "ScaledObject" to ensure unique metric names
 - **`redis`**: Identifies the trigger type/source
+- **`demo_queue`**: Includes the specific Redis list name being monitored
 - **Uniqueness**: Prevents naming conflicts across different ScaledObjects
 
 ### HPA Integration Analysis
@@ -175,7 +176,7 @@ kubectl describe hpa keda-hpa-redis-worker-scaler -n workload
 The key metric configuration shows:
 ```bash
 Metrics:                                   ( current / target )
-  "s0-redis" (target average value):       0 / 1
+  "s0-redis-demo_queue" (target average value):       0 / 1
 ```
 
 This corresponds to the ScaledObject configuration in `workload/scaledobject.yaml`:
