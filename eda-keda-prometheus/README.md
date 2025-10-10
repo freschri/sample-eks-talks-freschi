@@ -90,10 +90,13 @@ kubectl get nodes -o json|jq -Cjr '.items[] | .metadata.name," ",.metadata.label
 
 Expected output:
 ```bash
-i-09f8cc029971ea2bd c6g.large arm64
-i-0cdc488091ff514bd c5.large amd64
-i-0ca4843df75cdea84 c5a.large amd64
+i-07927a479b3f904bc c6g.large arm64
+i-06ab0b50ca012f7f5 c6a.large amd64
 ```
+
+You can also use [eks-node-viewer](https://github.com/awslabs/eks-node-viewer):
+
+![eks-node-viewer](./images/eks_node_viewer_before.png)
 
 ## Understanding Redis Queue-Based Scaling
 
@@ -245,6 +248,18 @@ worker-deployment-abc123-ghi789  0/1     ContainerCreating   0          10s
 worker-deployment-abc123-xyz999  1/1     Running             0          30s
 ```
 
+You can also monitor the progressive creation of pods and associated nodes with [k9s](https://k9scli.io/), before the scaling event:
+
+![k9s](./images/k9s_before.png)
+
+During the event:
+
+![k9s](./images/k9s_during.png)
+
+And after the event:
+
+![k9s](./images/k9s_after.png)
+
 ### 4. Monitor Queue Processing
 
 Check queue length as jobs are processed:
@@ -275,12 +290,16 @@ kubectl get nodes -o json|jq -Cjr '.items[] | .metadata.name," ",.metadata.label
 
 Expected output showing new nodes:
 ```bash
-i-09f8cc029971ea2bd c6g.large arm64
-i-0cdc488091ff514bd c5.large amd64
-i-0ca4843df75cdea84 c5a.large amd64
-i-06f90868d790a5908 c5.large amd64
-i-05f57c38b7177eb1d c5.xlarge amd64
+i-07927a479b3f904bc c6g.large arm64
+i-0a579db4e474be124 c5.xlarge amd64
+i-08bfa1b0b64739b0c c5.large amd64
+i-06ab0b50ca012f7f5 c6a.large amd64
 ```
+
+And with `eks-node-viewer`:
+
+![eks-node-viewer](./images/eks_node_viewer_after.png)
+
 
 ### 6. Observe Scale-Down
 
@@ -323,6 +342,10 @@ kubectl port-forward svc/kube-prometheus-stack-grafana 3000:80 -n monitoring &
 ```
 
 Access the Grafana UI and import an HPA dashboard, e.g.: https://grafana.com/grafana/dashboards/22128-horizontal-pod-autoscaler-hpa/
+
+You will see the HPA event we just triggered:
+
+![grafana dashboard hpa](./images/grafana_dashboard_hpa.png)
 
 ### Key Metrics Available
 
