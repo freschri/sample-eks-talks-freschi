@@ -19,7 +19,7 @@ The solution combines several key components to create a fully automated, event-
 ## Prerequisites
 
 - AWS account with appropriate permissions
-- **Fork this repository** (Flux will commit its configuration files to your fork)
+- **Fork this repository** (Flux will commit its configuration files to your fork) and cd into it
 - Linux-based operating system for command execution
 
 ## Deployment
