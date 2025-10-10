@@ -15,6 +15,6 @@ spec:
   triggers:
   - type: redis
     metadata:
-      address: redis:6379
+      address: redis.workload.svc.cluster.local:6379
       listName: demo_queue
       listLength: '1'  # 1 pod per job
