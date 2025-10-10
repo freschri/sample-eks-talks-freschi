@@ -19,7 +19,7 @@ The solution combines several key components to create a fully automated, event-
 ## Prerequisites
 
 - AWS account with appropriate permissions
-- **Fork this repository** (Flux will commit its configuration files to your fork)
+- **Fork this repository** (Flux will commit its configuration files to your fork) and cd into it
 - Linux-based operating system for command execution
 
 ## Deployment
@@ -127,7 +127,7 @@ KEDA acts as an adapter, implementing both custom and external metrics APIs. It 
 Check the external metrics API that KEDA exposes:
 
 ```bash
-kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/workload/s0-redis?labelSelector=scaledobject.keda.sh%2Fname%3Dredis-worker-scaler" | jq
+kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/workload/s0-redis-demo_queue?labelSelector=scaledobject.keda.sh%2Fname%3Dredis-worker-scaler" | jq
 ```
 
 Expected output:
@@ -138,7 +138,7 @@ Expected output:
   "metadata": {},
   "items": [
     {
-      "metricName": "s0-redis",
+      "metricName": "s0-redis-demo_queue",
       "metricLabels": null,
       "timestamp": "2025-10-10T07:45:26Z",
       "value": "0"
@@ -147,9 +147,10 @@ Expected output:
 }
 ```
 
-The `s0-redis` naming convention serves multiple purposes:
+The `s0-redis-demo_queue` naming convention serves multiple purposes:
 - **`s0-`**: Prefix indicating "ScaledObject" to ensure unique metric names
 - **`redis`**: Identifies the trigger type/source
+- **`demo_queue`**: Includes the specific Redis list name being monitored
 - **Uniqueness**: Prevents naming conflicts across different ScaledObjects
 
 ### HPA Integration Analysis
@@ -162,9 +163,11 @@ kubectl get hpa -A
 
 Expected output:
 ```bash
-NAMESPACE   NAME                           REFERENCE           TARGETS     MINPODS   MAXPODS   REPLICAS   AGE
-workload    keda-hpa-redis-worker-scaler   Deployment/worker   0/1 (avg)   0         10        0          2m58s
+NAMESPACE   NAME                           REFERENCE           TARGETS             MINPODS   MAXPODS   REPLICAS   AGE
+workload    keda-hpa-redis-worker-scaler   Deployment/worker   <unknown>/1 (avg)   1         10        0          2m58s
 ```
+
+**Note**: The `<unknown>/1 (avg)` target is normal behavior for scale-to-zero configurations. When `minReplicaCount: 0` and no pods are running, HPA cannot calculate per-pod averages, so it displays `<unknown>`. This indicates the system is correctly in scale-to-zero mode. Once jobs are added to the queue and pods scale up, you'll see actual values like `1/1 (avg)`.
 
 Get detailed HPA information:
 
@@ -175,7 +178,7 @@ kubectl describe hpa keda-hpa-redis-worker-scaler -n workload
 The key metric configuration shows:
 ```bash
 Metrics:                                   ( current / target )
-  "s0-redis" (target average value):       0 / 1
+  "s0-redis-demo_queue" (target average value):       0 / 1
 ```
 
 This corresponds to the ScaledObject configuration in `workload/scaledobject.yaml`:
@@ -344,6 +347,11 @@ kubectl get scaledobject -n workload -w
 # View scaling events
 kubectl get events -n workload --sort-by='.lastTimestamp'
 ```
+
+**Understanding HPA Target Values**:
+- `<unknown>/1 (avg)`: Normal when replicas = 0 (scale-to-zero mode)
+- `1/1 (avg)`: Active scaling with 1 job per pod target
+- `0/1 (avg)`: Queue empty but pods still running (during cooldown)
 
 ## Understanding Scale-to-Zero Behavior
 
