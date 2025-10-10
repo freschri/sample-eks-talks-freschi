@@ -163,9 +163,11 @@ kubectl get hpa -A
 
 Expected output:
 ```bash
-NAMESPACE   NAME                           REFERENCE           TARGETS     MINPODS   MAXPODS   REPLICAS   AGE
-workload    keda-hpa-redis-worker-scaler   Deployment/worker   0/1 (avg)   0         10        0          2m58s
+NAMESPACE   NAME                           REFERENCE           TARGETS             MINPODS   MAXPODS   REPLICAS   AGE
+workload    keda-hpa-redis-worker-scaler   Deployment/worker   <unknown>/1 (avg)   1         10        0          2m58s
 ```
+
+**Note**: The `<unknown>/1 (avg)` target is normal behavior for scale-to-zero configurations. When `minReplicaCount: 0` and no pods are running, HPA cannot calculate per-pod averages, so it displays `<unknown>`. This indicates the system is correctly in scale-to-zero mode. Once jobs are added to the queue and pods scale up, you'll see actual values like `1/1 (avg)`.
 
 Get detailed HPA information:
 
@@ -345,6 +347,11 @@ kubectl get scaledobject -n workload -w
 # View scaling events
 kubectl get events -n workload --sort-by='.lastTimestamp'
 ```
+
+**Understanding HPA Target Values**:
+- `<unknown>/1 (avg)`: Normal when replicas = 0 (scale-to-zero mode)
+- `1/1 (avg)`: Active scaling with 1 job per pod target
+- `0/1 (avg)`: Queue empty but pods still running (during cooldown)
 
 ## Understanding Scale-to-Zero Behavior
 
