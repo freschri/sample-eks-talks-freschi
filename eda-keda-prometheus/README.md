@@ -347,6 +347,19 @@ You will see the HPA event we just triggered:
 
 ![grafana dashboard hpa](./images/grafana_dashboard_hpa.png)
 
+#### How Redis Queue Metrics Appear in Grafana
+
+The HPA dashboard shows the `s0-redis-demo_queue` metric through this flow:
+
+1. **KEDA queries Redis directly**
+2. **KEDA exposes metric** via External Metrics API: `/apis/external.metrics.k8s.io/v1beta1/.../s0-redis-demo_queue`
+3. **HPA controller queries External Metrics API** and updates HPA object status with current value
+4. **kube-state-metrics reads HPA object** via Core Kubernetes API: `/apis/autoscaling/v2/.../horizontalpodautoscalers/...`
+5. **kube-state-metrics exports to Prometheus**
+6. **Grafana queries Prometheus**
+
+The `s0-redis-demo_queue` metric name appears in Grafana because kube-state-metrics (included in kube-prometheus-stack) converts HPA object metadata into Prometheus metrics, including the external metric names that KEDA configured.
+
 ### Key Metrics Available
 
 The setup exposes several important metrics for monitoring:
