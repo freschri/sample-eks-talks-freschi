@@ -7,18 +7,62 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   labels:
-    app.kubernetes.io/name: prometheus-example-app
-  name: prometheus-example-app
+    app.kubernetes.io/name: redis
+  name: redis
   namespace: workload
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: prometheus-example-app
+      app.kubernetes.io/name: redis
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: prometheus-example-app
+        app.kubernetes.io/name: redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: workload
+  labels:
+    app.kubernetes.io/name: redis
+spec:
+  selector:
+    app.kubernetes.io/name: redis
+  ports:
+  - port: 6379
+    targetPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/name: worker
+  name: worker
+  namespace: workload
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: worker
     spec:
       nodeSelector:
         nodepool: demo-workload
@@ -28,30 +72,41 @@ spec:
           value: "true"
           effect: NoSchedule
       containers:
-      - name: prometheus-example-app
+      - name: worker
+        image: python:3.11-slim
+        command: ["/bin/sh"]
+        args:
+          - -c
+          - |
+            pip install redis
+            cat > worker.py << 'EOF'
+            import redis
+            import json
+            import time
+            import os
+            
+            r = redis.Redis(host='redis', port=6379, decode_responses=True)
+            print("Worker started, waiting for jobs...")
+            
+            while True:
+                try:
+                    job = r.brpop('demo_queue', timeout=30)
+                    if job:
+                        data = json.loads(job[1])
+                        print(f"Processing job {data['id']}...")
+                        time.sleep(120)  # 2 minutes of work per job
+                        print(f"Job {data['id']} completed")
+                    else:
+                        print("No jobs, waiting...")
+                except Exception as e:
+                    print(f"Error: {e}")
+                    time.sleep(5)
+            EOF
+            python worker.py
         resources:
           requests:
-            cpu: "500m"
-            memory: "256Mi"
+            cpu: "100m"
+            memory: "128Mi"
           limits:
-            cpu: "1000m"
-            memory: "512Mi"
-        image: quay.io/brancz/prometheus-example-app:v0.3.0
-        ports:
-        - name: web
-          containerPort: 8080
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: prometheus-example-app
-  namespace: workload
-  labels:
-    app.kubernetes.io/name: prometheus-example-app
-spec:
-  selector:
-    app.kubernetes.io/name: prometheus-example-app
-  ports:
-  - port: 8080
-    targetPort: 8080
-    name: web
+            cpu: "200m"
+            memory: "256Mi"

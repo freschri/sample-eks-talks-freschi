@@ -1,20 +1,41 @@
 apiVersion: monitoring.coreos.com/v1
-kind: PodMonitor
+kind: ServiceMonitor
 metadata:
   labels:
-    app.kubernetes.io/name: prometheus-example-app
-    release: kube-prometheus-stack # this is important for PodMonitor to be found
-  name: prometheus-example-app
+    app.kubernetes.io/name: keda-operator
+    release: kube-prometheus-stack # this is important for ServiceMonitor to be found
+  name: keda-operator
   namespace: monitoring
 spec:
   selector:
     matchLabels:
-      app.kubernetes.io/name: prometheus-example-app
-  podMetricsEndpoints:
-  - port: web
+      app.kubernetes.io/name: keda-operator
+  endpoints:
+  - port: metrics
     path: /metrics
-    interval: 5s
+    interval: 15s
     scheme: http
   namespaceSelector:
     matchNames:
-    - workload
+    - keda
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  labels:
+    app.kubernetes.io/name: keda-metrics-apiserver
+    release: kube-prometheus-stack
+  name: keda-metrics-apiserver
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: keda-metrics-apiserver
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 15s
+    scheme: http
+  namespaceSelector:
+    matchNames:
+    - keda

@@ -1,13 +1,15 @@
-# Event-Driven Autoscaling for Kubernetes Workloads with KEDA and Prometheus
+# Event-Driven Autoscaling for Kubernetes Workloads with KEDA and Redis
 
-This repository demonstrates how to implement sophisticated autoscaling in Kubernetes using KEDA (Kubernetes Event-Driven Autoscaler) with Prometheus metrics. The setup showcases horizontal pod autoscaling based on custom application metrics and automatic node provisioning with Karpenter.
+This repository demonstrates how to implement sophisticated autoscaling in Kubernetes using KEDA (Kubernetes Event-Driven Autoscaler) with Redis queue metrics. The setup showcases horizontal pod autoscaling based on queue depth, scale-to-zero capabilities, and automatic node provisioning with Karpenter.
 
 ## Architecture
 
 The solution combines several key components to create a fully automated, event-driven scaling system:
 
-- **KEDA**: Provides event-driven autoscaling capabilities, translating custom metrics into HPA-compatible scaling decisions
-- **Prometheus**: Collects and stores application metrics used for scaling decisions
+- **KEDA**: Provides event-driven autoscaling capabilities, monitoring Redis queue length for scaling decisions
+- **Redis**: Acts as a message queue for background job processing
+- **Worker Pods**: Process jobs from the Redis queue with configurable processing time
+- **Prometheus**: Collects and stores KEDA and Redis metrics for observability
 - **Karpenter**: Automatically provisions and manages EC2 instances based on pod scheduling requirements
 - **Flux**: GitOps continuous delivery for declarative cluster management
 - **Grafana**: Observability dashboard for monitoring scaling behavior and metrics
@@ -93,22 +95,39 @@ i-0cdc488091ff514bd c5.large amd64
 i-0ca4843df75cdea84 c5a.large amd64
 ```
 
+## Understanding Redis Queue-Based Scaling
+
+This demo uses Redis as a message queue for background job processing. The scaling architecture works as follows:
+
+1. **Jobs are pushed** to a Redis list (`demo_queue`)
+2. **KEDA monitors** the queue length every 5 seconds
+3. **Worker pods scale** based on queue depth (1 pod per job)
+4. **Scale-to-zero** when queue is empty
+5. **Sustained scaling** with 2-minute job processing time
+
+### Key Components
+
+- **Redis**: Message queue storing jobs as JSON objects
+- **Worker Deployment**: Python workers that process jobs from the queue
+- **KEDA ScaledObject**: Monitors `demo_queue` length and scales worker pods
+- **Redis Exporter**: Exposes Redis metrics to Prometheus for Grafana dashboards
+
 ## Understanding Kubernetes API Aggregation and KEDA Integration
 
 The Kubernetes API aggregation layer extends the cluster's API surface without modifying core Kubernetes code. This architecture enables three critical metric APIs:
 
 - **`metrics.k8s.io`**: Basic pod and node resource metrics (CPU, memory)
 - **`custom.metrics.k8s.io`**: Application-specific metrics from within the cluster
-- **`external.metrics.k8s.io`**: Metrics from external systems (like Prometheus)
+- **`external.metrics.k8s.io`**: Metrics from external systems (like Redis via KEDA)
 
-KEDA acts as an adapter, implementing both custom and external metrics APIs. It translates various event sources into metrics that the Horizontal Pod Autoscaler (HPA) can consume for scaling decisions.
+KEDA acts as an adapter, implementing both custom and external metrics APIs. It translates Redis queue length into metrics that the Horizontal Pod Autoscaler (HPA) can consume for scaling decisions.
 
 ### Examining KEDA Metrics Exposure
 
 Check the external metrics API that KEDA exposes:
 
 ```bash
-kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/workload/s0-prometheus?labelSelector=scaledobject.keda.sh%2Fname%3Dexample-app" | jq
+kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/workload/s0-redis?labelSelector=scaledobject.keda.sh%2Fname%3Dredis-worker-scaler" | jq
 ```
 
 Expected output:
@@ -119,27 +138,21 @@ Expected output:
   "metadata": {},
   "items": [
     {
-      "metricName": "s0-prometheus",
+      "metricName": "s0-redis",
       "metricLabels": null,
-      "timestamp": "2025-09-14T07:05:26Z",
+      "timestamp": "2025-10-10T07:45:26Z",
       "value": "0"
     }
   ]
 }
 ```
 
-The `s0-prometheus` naming convention serves multiple purposes:
+The `s0-redis` naming convention serves multiple purposes:
 - **`s0-`**: Prefix indicating "ScaledObject" to ensure unique metric names
-- **`prometheus`**: Identifies the trigger type/source
+- **`redis`**: Identifies the trigger type/source
 - **Uniqueness**: Prevents naming conflicts across different ScaledObjects
 
 ### HPA Integration Analysis
-
-In this example, we'll use the `http_requests_total` metric to HPA functionality. This metric counts total HTTP requests and provides an easy way to trigger scaling events by simply generating traffic to our service.
-
-While this works well for learning and testing purposes, it's important to note that in production environments, you'll need to carefully select metrics that truly reflect your application's workload and performance requirements. Production metrics will vary significantly based on your specific use case. For instance, a message processing service might scale based on queue length, while a customer-facing API might scale on request latency. Compute-intensive applications often scale on CPU utilization, and connection-bound services might scale based on concurrent connections. Data processing applications commonly use memory consumption as their scaling metric.
-
-The key is selecting metrics that align with your application's bottlenecks and business requirements. For now, http_requests_total serves as a clear, easily controllable metric for understanding how HPA works.
 
 Examine the HPA that KEDA automatically creates:
 
@@ -149,262 +162,115 @@ kubectl get hpa -A
 
 Expected output:
 ```bash
-NAMESPACE   NAME                   REFERENCE                           TARGETS     MINPODS   MAXPODS   REPLICAS   AGE
-workload    keda-hpa-example-app   Deployment/prometheus-example-app   0/2 (avg)   1         10        1          2m58s
+NAMESPACE   NAME                           REFERENCE           TARGETS     MINPODS   MAXPODS   REPLICAS   AGE
+workload    keda-hpa-redis-worker-scaler   Deployment/worker   0/1 (avg)   0         10        0          2m58s
 ```
 
 Get detailed HPA information:
 
 ```bash
-kubectl describe hpa keda-hpa-example-app -n workload
-```
-
-Expected output:
-```bash
-Name:                                      keda-hpa-example-app
-Namespace:                                 workload
-Labels:                                    app.kubernetes.io/managed-by=keda-operator
-                                           app.kubernetes.io/name=keda-hpa-example-app
-                                           app.kubernetes.io/part-of=example-app
-                                           app.kubernetes.io/version=2.17.2
-                                           kustomize.toolkit.fluxcd.io/name=workload
-                                           kustomize.toolkit.fluxcd.io/namespace=flux-system
-                                           scaledobject.keda.sh/name=example-app
-Annotations:                               <none>
-CreationTimestamp:                         Sun, 14 Sep 2025 09:04:08 +0200
-Reference:                                 Deployment/prometheus-example-app
-Metrics:                                   ( current / target )
-  "s0-prometheus" (target average value):  0 / 2
-Min replicas:                              1
-Max replicas:                              10
-Deployment pods:                           1 current / 1 desired
-Conditions:
-  Type            Status  Reason               Message
-  ----            ------  ------               -------
-  AbleToScale     True    ScaleDownStabilized  recent recommendations were higher than current one, applying the highest recent recommendation
-  ScalingActive   True    ValidMetricFound     the HPA was able to successfully calculate a replica count from external metric s0-prometheus(&LabelSelector{MatchLabels:map[string]string{scaledobject.keda.sh/name: example-app,},MatchExpressions:[]LabelSelectorRequirement{},})
-  ScalingLimited  False   DesiredWithinRange   the desired count is within the acceptable range
-Events:           <none>
+kubectl describe hpa keda-hpa-redis-worker-scaler -n workload
 ```
 
 The key metric configuration shows:
 ```bash
 Metrics:                                   ( current / target )
-  "s0-prometheus" (target average value):  0 / 2
+  "s0-redis" (target average value):       0 / 1
 ```
 
-This corresponds to the ScaledObject configuration in `eda-keda-prometheus/workload/scaledobject.yaml`:
+This corresponds to the ScaledObject configuration in `workload/scaledobject.yaml`:
 ```bash
-      metricName: http_requests_total
-      query: sum(http_requests_total)
-      threshold: "2"
+      listName: demo_queue
+      listLength: '1'  # 1 pod per job
 ```
 
-### HPA Configuration Deep Dive
+## Testing Redis Queue Autoscaling
 
-Examine the complete HPA YAML configuration:
+### 1. Check Initial State
 
-```bash
-kubectl get hpa keda-hpa-example-app -n workload -o yaml
-```
-
-Expected output:
-
-```bash
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  creationTimestamp: "2025-09-14T07:04:08Z"
-  labels:
-    app.kubernetes.io/managed-by: keda-operator
-    app.kubernetes.io/name: keda-hpa-example-app
-    app.kubernetes.io/part-of: example-app
-    app.kubernetes.io/version: 2.17.2
-    kustomize.toolkit.fluxcd.io/name: workload
-    kustomize.toolkit.fluxcd.io/namespace: flux-system
-    scaledobject.keda.sh/name: example-app
-  name: keda-hpa-example-app
-  namespace: workload
-  ownerReferences:
-  - apiVersion: keda.sh/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: ScaledObject
-    name: example-app
-    uid: a24813ff-033b-4d15-bcca-a9e3403064bd
-  resourceVersion: "351305"
-  uid: dd09e5a8-36fd-42f0-96b5-ed133ac949fb
-spec:
-  maxReplicas: 10
-  metrics:
-  - external:
-      metric:
-        name: s0-prometheus
-        selector:
-          matchLabels:
-            scaledobject.keda.sh/name: example-app
-      target:
-        averageValue: "2"
-        type: AverageValue
-    type: External
-  minReplicas: 1
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: prometheus-example-app
-status:
-  conditions:
-  - lastTransitionTime: "2025-09-14T07:04:23Z"
-    message: recommended size matches current size
-    reason: ReadyForNewScale
-    status: "True"
-    type: AbleToScale
-  - lastTransitionTime: "2025-09-14T07:04:23Z"
-    message: 'the HPA was able to successfully calculate a replica count from external
-      metric s0-prometheus(&LabelSelector{MatchLabels:map[string]string{scaledobject.keda.sh/name:
-      example-app,},MatchExpressions:[]LabelSelectorRequirement{},})'
-    reason: ValidMetricFound
-    status: "True"
-    type: ScalingActive
-  - lastTransitionTime: "2025-09-14T07:09:24Z"
-    message: the desired replica count is less than the minimum replica count
-    reason: TooFewReplicas
-    status: "True"
-    type: ScalingLimited
-  currentMetrics:
-  - external:
-      current:
-        averageValue: "0"
-      metric:
-        name: s0-prometheus
-        selector:
-          matchLabels:
-            scaledobject.keda.sh/name: example-app
-    type: External
-  currentReplicas: 1
-  desiredReplicas: 1
-```
-
-Critical configuration details:
-- **`type: AverageValue`**: The metric value is divided by the number of pods before comparison with the target
-- **`type: External`**: Indicates the metric comes from an external source (Prometheus via KEDA)
-- **`averageValue: "2"`**: Target threshold for scaling decisions
-
-## Testing Autoscaling Behavior
-
-### 1. Setup Port Forwarding
-
-Forward traffic to the example application:
-
-```bash
-kubectl port-forward svc/prometheus-example-app 3001:8080 -n workload &
-```
-
-### 2. Generate Initial Traffic
-
-Send a single request to establish baseline metrics:
-
-```bash
-curl http://localhost:3001/
-```
-
-Check the updated metric value:
-
-```bash
-kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/workload/s0-prometheus?labelSelector=scaledobject.keda.sh%2Fname%3Dexample-app" | jq
-```
-
-Expected output:
-```bash
-{
-  "kind": "ExternalMetricValueList",
-  "apiVersion": "external.metrics.k8s.io/v1beta1",
-  "metadata": {},
-  "items": [
-    {
-      "metricName": "s0-prometheus",
-      "metricLabels": null,
-      "timestamp": "2025-09-14T07:45:48Z",
-      "value": "1"
-    }
-  ]
-}
-```
-
-### 3. Trigger Scaling Event
-
-Generate sufficient traffic to exceed the scaling threshold:
-
-```bash
-for i in {1..30}
-do
-    curl http://localhost:3001/
-done
-```
-
-Verify the metric increase:
-
-```bash
-kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/workload/s0-prometheus?labelSelector=scaledobject.keda.sh%2Fname%3Dexample-app" | jq
-```
-
-Expected output:
-```bash
-{
-  "kind": "ExternalMetricValueList",
-  "apiVersion": "external.metrics.k8s.io/v1beta1",
-  "metadata": {},
-  "items": [
-    {
-      "metricName": "s0-prometheus",
-      "metricLabels": null,
-      "timestamp": "2025-09-14T13:10:16Z",
-      "value": "31"
-    }
-  ]
-}
-```
-
-### 4. Observe Pod Scaling
-
-Monitor pod creation as the HPA responds to increased metrics:
+Verify no worker pods are running (scale-to-zero):
 
 ```bash
 kubectl get pods -n workload
 ```
 
-Expected output showing scaling in progress:
+Expected output:
 ```bash
-NAME                                     READY   STATUS              RESTARTS   AGE
-prometheus-example-app-69986d5b8-2s965   0/1     ContainerCreating   0          22s
-prometheus-example-app-69986d5b8-46pbh   0/1     ContainerCreating   0          22s
-prometheus-example-app-69986d5b8-5kmqp   0/1     Pending             0          7s
-prometheus-example-app-69986d5b8-62prv   0/1     ContainerCreating   0          22s
-prometheus-example-app-69986d5b8-94jhs   1/1     Running             0          176m
-prometheus-example-app-69986d5b8-9cwg8   0/1     Pending             0          7s
-prometheus-example-app-69986d5b8-ct85v   0/1     Pending             0          7s
-prometheus-example-app-69986d5b8-xnhlh   0/1     Pending             0          7s
+NAME                             READY   STATUS    RESTARTS   AGE
+redis-6d4f8c9b8f-xyz123          1/1     Running   0          5m
+redis-exporter-abc456-def789     1/1     Running   0          5m
 ```
 
-A total of 10 pods will be created.
+### 2. Generate Sustained Load (10 Pods for 2 Minutes)
 
-You can also monitor the progressive creation of pods and associated nodes with [k9s](https://k9scli.io/):
+Use the load generator script to create 10 long-running jobs:
 
-![k9s](./images/k9s.png)
+```bash
+cd eda-keda-prometheus/workload
+./generate-load.sh sustained
+```
 
-And [eks-node-viewer](https://github.com/awslabs/eks-node-viewer):
+Expected output:
+```bash
+🚀 Starting Redis Queue Load Generator
+======================================
+📊 Generating 10 long-running jobs (2 minutes each)...
+This will trigger scaling to 10 pods that stay busy for 2 minutes
+✅ Added job 1
+✅ Added job 2
+...
+✅ Added job 10
 
-![eks-node-viewer](./images/eks_node_viewer.png)
+📈 Queue status:
+Queue length: 10 jobs
+```
+
+### 3. Watch Scaling Behavior
+
+Monitor pod creation in real-time:
+
+```bash
+kubectl get pods -n workload -w
+```
+
+You'll see pods scaling from 0 to 10:
+```bash
+NAME                             READY   STATUS              RESTARTS   AGE
+worker-deployment-abc123-def456  0/1     ContainerCreating   0          10s
+worker-deployment-abc123-ghi789  0/1     ContainerCreating   0          10s
+...
+worker-deployment-abc123-xyz999  1/1     Running             0          30s
+```
+
+### 4. Monitor Queue Processing
+
+Check queue length as jobs are processed:
+
+```bash
+./generate-load.sh status
+```
+
+Expected output:
+```bash
+📊 Current Status:
+==================
+Queue length: 5
+
+Worker pods:
+worker-deployment-abc123-def456  1/1  Running  0  1m
+worker-deployment-abc123-ghi789  1/1  Running  0  1m
+...
+```
 
 ### 5. Verify Node Autoscaling
 
-Check that Karpenter has provisioned additional nodes to accommodate the scaled pods:
+Check that Karpenter has provisioned additional nodes:
 
 ```bash
 kubectl get nodes -o json|jq -Cjr '.items[] | .metadata.name," ",.metadata.labels."beta.kubernetes.io/instance-type"," ",.metadata.labels."beta.kubernetes.io/arch", "\n"'|sort -k3 -r
 ```
 
-Expected output showing new nodes (node type, size and count may vary depending on Karpenter's selection and Amazon EC2 instance availability):
+Expected output showing new nodes:
 ```bash
 i-09f8cc029971ea2bd c6g.large arm64
 i-0cdc488091ff514bd c5.large amd64
@@ -413,20 +279,32 @@ i-06f90868d790a5908 c5.large amd64
 i-05f57c38b7177eb1d c5.xlarge amd64
 ```
 
-Examine Karpenter NodeClaims:
+### 6. Observe Scale-Down
+
+After jobs complete (2 minutes), watch pods scale back to zero:
 
 ```bash
-kubectl get nodeclaim -A
+kubectl get pods -n workload -w
 ```
 
-Expected output showing the recently created claims:
+The cooldown period (5 minutes) prevents rapid scale-down, then pods will terminate.
+
+## Load Generator Options
+
+The `generate-load.sh` script provides multiple testing scenarios:
+
 ```bash
-NAME                    TYPE        CAPACITY    ZONE              NODE                  READY   AGE
-demo-workload-5ft6t     c5.large    on-demand   ap-northeast-1d   i-06f90868d790a5908   True    87s
-demo-workload-7x6m4     c5.xlarge   on-demand   ap-northeast-1c   i-05f57c38b7177eb1d   True    72s
-demo-workload-d8q4c     c5.large    on-demand   ap-northeast-1c   i-0cdc488091ff514bd   True    12m
-general-purpose-lhmcz   c5a.large   on-demand   ap-northeast-1c   i-0ca4843df75cdea84   True    4h17m
-system-prjh2            c6g.large   on-demand   ap-northeast-1a   i-09f8cc029971ea2bd   True    4h22m
+# Generate 10 jobs (2 min each) - sustained scaling demo
+./generate-load.sh sustained
+
+# Generate 50 quick jobs (5 sec each) - burst scaling demo  
+./generate-load.sh burst
+
+# Check current status
+./generate-load.sh status
+
+# Clear the queue
+./generate-load.sh clear
 ```
 
 ## Observability
@@ -443,19 +321,37 @@ kubectl port-forward svc/kube-prometheus-stack-grafana 3000:80 -n monitoring &
 
 Access the Grafana UI and import an HPA dashboard, e.g.: https://grafana.com/grafana/dashboards/22128-horizontal-pod-autoscaler-hpa/
 
-You will see the HPA event we just triggered:
+### Key Metrics Available
 
-![grafana dashboard hpa](./images/grafana_dashboard_hpa.png)
+The setup exposes several important metrics for monitoring:
 
-## Understanding Metric Resets During Karpenter Pod Disruptions
+- **`redis_list_length{list="demo_queue"}`** - Current queue depth
+- **`keda_scaled_object_*`** - KEDA ScaledObject metrics
+- **`kube_horizontalpodautoscaler_*`** - HPA status and scaling events
+- **`kube_deployment_status_replicas`** - Current replica counts
 
-When Karpenter manages node provisioning and termination, it may occasionally disrupt pods by moving them to different nodes. This disruption impacts how we measure `http_requests_total`, creating potential issues with our metrics collection.
+### Monitoring Scaling Events
 
-When pod disruption occurs, the old pods are terminated, taking their accumulated `http_requests_total` counter values with them. The new pods that replace them start fresh with their counters at zero. This reset creates a temporary but significant drop in our metrics.
+You can also monitor scaling with command-line tools:
 
-Our query `sum(http_requests_total)` will show sudden drops during these transitions. Since new pods have no request history and the old pods' metrics are gone, the sum may plummet or even hit zero. This behavior is normal but needs to be considered when choosing metrics, setting up HPA thresholds and monitoring alerts to avoid false scaling triggers during pod transitions.
+```bash
+# Watch HPA scaling decisions
+kubectl get hpa -n workload -w
 
-This situation highlights why production environments need carefully chosen metrics and properly tuned scaling parameters that account for such infrastructure changes.
+# Monitor KEDA ScaledObject
+kubectl get scaledobject -n workload -w
+
+# View scaling events
+kubectl get events -n workload --sort-by='.lastTimestamp'
+```
+
+## Understanding Scale-to-Zero Behavior
+
+This demo showcases KEDA's powerful scale-to-zero capability, which fundamentally changes how we think about resource utilization in Kubernetes. When no jobs are present in the Redis queue, the system maintains zero worker pods, eliminating unnecessary resource consumption and associated costs. The moment jobs arrive in the queue, KEDA detects this change within seconds and immediately begins scaling up worker pods to handle the workload.
+
+As jobs are processed and completed, the queue gradually empties. Once all jobs are finished and the queue remains empty for the configured cooldown period, KEDA intelligently scales the worker pods back down to zero. This creates a truly elastic system that only consumes resources when actual work needs to be performed.
+
+This scaling pattern proves particularly valuable for batch processing scenarios such as ETL jobs and report generation, where workloads are intermittent but resource-intensive. Event processing applications benefit significantly from this approach, especially when handling tasks like image resizing or email sending that occur in bursts. Scheduled tasks and periodic data processing workflows can leverage scale-to-zero to remain dormant between execution cycles, while bursty workloads such as traffic spikes during sales events or seasonal processing can automatically provision the exact resources needed without manual intervention.
 
 ## Security
 

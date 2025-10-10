@@ -1,21 +1,20 @@
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
-  name: example-app
+  name: redis-worker-scaler
   namespace: workload
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: prometheus-example-app
-  pollingInterval:  2 
-  cooldownPeriod:   30
-  minReplicaCount: 1        
+    name: worker
+  pollingInterval: 5
+  cooldownPeriod: 300  # 5 min cooldown before scaling down
+  minReplicaCount: 0   # Scale to zero when no jobs
   maxReplicaCount: 10
   triggers:
-  - type: prometheus
+  - type: redis
     metadata:
-      serverAddress: http://kube-prometheus-stack-prometheus.monitoring:9090
-      metricName: http_requests_total
-      query: sum(http_requests_total)
-      threshold: "2"
+      address: redis:6379
+      listName: demo_queue
+      listLength: '1'  # 1 pod per job

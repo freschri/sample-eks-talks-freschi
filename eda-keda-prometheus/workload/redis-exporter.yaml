@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/name: redis-exporter
+  name: redis-exporter
+  namespace: workload
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis-exporter
+    spec:
+      containers:
+      - name: redis-exporter
+        image: oliver006/redis_exporter:latest
+        env:
+        - name: REDIS_ADDR
+          value: "redis://redis:6379"
+        ports:
+        - containerPort: 9121
+          name: metrics
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "100m"
+            memory: "128Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-exporter
+  namespace: workload
+  labels:
+    app.kubernetes.io/name: redis-exporter
+spec:
+  selector:
+    app.kubernetes.io/name: redis-exporter
+  ports:
+  - port: 9121
+    targetPort: 9121
+    name: metrics
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  labels:
+    app.kubernetes.io/name: redis-exporter
+    release: kube-prometheus-stack
+  name: redis-exporter
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis-exporter
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 15s
+    scheme: http
+  namespaceSelector:
+    matchNames:
+    - workload
