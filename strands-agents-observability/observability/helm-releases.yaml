@@ -141,7 +141,7 @@ spec:
           namespace: agent_obs
       exporters:
         otlp/jaeger:
-          endpoint: jaeger-collector:4317
+          endpoint: jaeger:4317
           tls:
             insecure: true
         prometheus:
