@@ -1,0 +1,158 @@
+apiVersion: v1
+data:
+  agent-observability.json: |
+    {
+      "annotations": { "list": [] },
+      "editable": true,
+      "graphTooltip": 1,
+      "panels": [
+        {
+          "title": "vLLM — Inference Latency (e2e)",
+          "type": "timeseries",
+          "gridPos": { "h": 7, "w": 8, "x": 0, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "histogram_quantile(0.50, rate(vllm:e2e_request_latency_seconds_bucket[5m]))", "legendFormat": "p50" },
+            { "expr": "histogram_quantile(0.95, rate(vllm:e2e_request_latency_seconds_bucket[5m]))", "legendFormat": "p95" },
+            { "expr": "histogram_quantile(0.99, rate(vllm:e2e_request_latency_seconds_bucket[5m]))", "legendFormat": "p99" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 10 } } }
+        },
+        {
+          "title": "vLLM — KV Cache Usage",
+          "type": "gauge",
+          "gridPos": { "h": 7, "w": 4, "x": 8, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "vllm:kv_cache_usage_perc", "legendFormat": "cache" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "thresholds": { "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.7}, {"color": "red", "value": 0.9}] } } }
+        },
+        {
+          "title": "vLLM — Requests",
+          "type": "timeseries",
+          "gridPos": { "h": 7, "w": 6, "x": 12, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "vllm:num_requests_running", "legendFormat": "running" },
+            { "expr": "vllm:num_requests_waiting", "legendFormat": "waiting" }
+          ]
+        },
+        {
+          "title": "vLLM — Tokens Generated",
+          "type": "timeseries",
+          "gridPos": { "h": 7, "w": 6, "x": 18, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "rate(vllm:generation_tokens_total[5m])", "legendFormat": "tokens/s" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 10 } } }
+        },
+        {
+          "title": "vLLM — Time to First Token",
+          "type": "timeseries",
+          "gridPos": { "h": 7, "w": 8, "x": 0, "y": 7 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "histogram_quantile(0.50, rate(vllm:time_to_first_token_seconds_bucket[5m]))", "legendFormat": "p50" },
+            { "expr": "histogram_quantile(0.95, rate(vllm:time_to_first_token_seconds_bucket[5m]))", "legendFormat": "p95" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "s" } }
+        },
+        {
+          "title": "vLLM — Request Success",
+          "type": "stat",
+          "gridPos": { "h": 3, "w": 4, "x": 8, "y": 7 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "sum(vllm:request_success_total)", "legendFormat": "total" }
+          ]
+        },
+        {
+          "title": "vLLM — Prompt Tokens",
+          "type": "stat",
+          "gridPos": { "h": 3, "w": 4, "x": 8, "y": 10 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "sum(vllm:prompt_tokens_total)", "legendFormat": "total" }
+          ]
+        },
+        {
+          "title": "Nginx — Requests/sec",
+          "type": "timeseries",
+          "gridPos": { "h": 7, "w": 6, "x": 12, "y": 7 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "rate(nginx_http_requests_total[1m])", "legendFormat": "req/s" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 10 } } }
+        },
+        {
+          "title": "Nginx — Active Connections",
+          "type": "stat",
+          "gridPos": { "h": 7, "w": 6, "x": 18, "y": 7 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "nginx_connections_active", "legendFormat": "active" },
+            { "expr": "nginx_connections_waiting", "legendFormat": "waiting" }
+          ]
+        },
+        {
+          "title": "Redis — Connected Clients",
+          "type": "timeseries",
+          "gridPos": { "h": 7, "w": 6, "x": 0, "y": 14 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "redis_connected_clients", "legendFormat": "clients" }
+          ]
+        },
+        {
+          "title": "Redis — Memory Used",
+          "type": "timeseries",
+          "gridPos": { "h": 7, "w": 6, "x": 6, "y": 14 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "redis_memory_used_bytes", "legendFormat": "used" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "bytes" } }
+        },
+        {
+          "title": "Redis — Commands/sec",
+          "type": "timeseries",
+          "gridPos": { "h": 7, "w": 6, "x": 12, "y": 14 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "rate(redis_commands_processed_total[1m])", "legendFormat": "cmd/s" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "short" } }
+        },
+        {
+          "title": "Agent — Spans Exported",
+          "type": "stat",
+          "gridPos": { "h": 7, "w": 3, "x": 18, "y": 14 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "sum(otelcol_exporter_sent_spans_total)", "legendFormat": "exported" }
+          ]
+        },
+        {
+          "title": "Agent — Spans Received",
+          "type": "stat",
+          "gridPos": { "h": 7, "w": 3, "x": 21, "y": 14 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "sum(otelcol_receiver_accepted_spans_total)", "legendFormat": "received" }
+          ]
+        }
+      ],
+      "schemaVersion": 39,
+      "tags": ["agent", "observability", "vllm", "infra"],
+      "time": { "from": "now-1h", "to": "now" },
+      "title": "Agent Observability",
+      "uid": "agent-obs-dashboard"
+    }
+kind: ConfigMap
+metadata:
+  creationTimestamp: null
+  name: grafana-agent-dashboard
+  namespace: observability
