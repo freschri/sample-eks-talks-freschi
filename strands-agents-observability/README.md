@@ -106,28 +106,42 @@ kubectl port-forward svc/jaeger 16686:16686 -n observability &
 2. Open Grafana: http://localhost:3000 (admin / agent-obs-demo)
 3. Open Jaeger: http://localhost:16686
 
+Arrange all three browser windows side by side.
+
 4. **Inject chaos**:
 ```bash
 ./strands-agents-observability/chaos/inject.sh
 ```
 
-5. **Ask the agent** using the preset prompts in the web UI
+5. **Check Grafana** — open the "Agent Observability" dashboard. You should see:
+   - Redis connected clients dropping
+   - Nginx error rate increasing
+   - vLLM KV cache usage and inference latency (will light up when the agent runs)
 
-6. **Fix layer 1** (missing secret), then re-ask:
+6. **Ask the agent** using the preset prompts in the web UI
+
+7. **Check Jaeger** — select service `sre-agent` and click "Find Traces". Click on a trace to see:
+   - The full span waterfall: `invoke_agent` → `execute_event_loop_cycle` → `chat` (LLM call) → `execute_tool` (kubectl/PromQL)
+   - How long each LLM call takes vs. each tool call
+   - The tool inputs and outputs in the span logs (click a span → "Logs" tab)
+
+8. **Fix layer 1** (missing secret), then re-ask the agent:
 ```bash
 kubectl create secret generic db-creds -n workload --from-literal=DB_PASSWORD=demo123
 ```
 
-7. **Fix layer 2** (OOMKill), then re-ask:
+9. **Fix layer 2** (OOMKill), then re-ask the agent:
 ```bash
 kubectl set resources deploy/sample-app -n workload --requests=memory=128Mi --limits=memory=256Mi
 ```
 
-8. **Fix layer 3** (wrong redis port):
+10. **Fix layer 3** (wrong redis port):
 ```bash
 kubectl patch svc redis -n workload --type='json' \
   -p='[{"op":"replace","path":"/spec/ports/0/port","value":6379},{"op":"replace","path":"/spec/ports/0/targetPort","value":6379}]'
 ```
+
+After each fix, re-ask the agent and check Jaeger — each diagnosis creates a new trace showing the agent peeling back the next layer.
 
 9. **Verify**:
 ```bash
