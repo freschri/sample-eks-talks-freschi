@@ -20,7 +20,7 @@ echo ">>> Layer 1: Deleting db-creds secret (will CrashLoop)..."
 kubectl delete secret db-creds -n "$NS" --ignore-not-found
 
 echo ">>> Restarting sample-app to trigger failures..."
-kubectl rollout restart deploy/sample-app -n "$NS"
+kubectl delete pods -l app=sample-app -n "$NS"
 
 echo ""
 echo "All 3 faults injected. Flux workload kustomization suspended."
