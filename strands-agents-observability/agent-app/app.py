@@ -53,7 +53,7 @@ else:
 logger.info(f"Using model provider: {MODEL_PROVIDER}")
 
 # --- Tools ---
-DIAGNOSE_TOOLS = [query_prometheus, get_pod_status, get_pod_logs, get_events, describe_resource]
+DIAGNOSE_TOOLS = [get_pod_status, get_pod_logs, get_events, describe_resource]
 FIX_TOOLS = DIAGNOSE_TOOLS + [kubectl_create_secret, kubectl_set_resources, kubectl_patch_service]
 
 # --- Prompts ---
