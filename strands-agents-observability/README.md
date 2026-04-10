@@ -113,58 +113,45 @@ Arrange all three browser windows side by side.
 ./strands-agents-observability/chaos/inject.sh
 ```
 
-5. **Check Grafana** — open the "Agent Observability" dashboard. You should see:
-   - Redis connected clients dropping
-   - Nginx error rate increasing
-   - vLLM KV cache usage and inference latency (will light up when the agent runs)
+5. **Click ▶ Start** in the UI — the agent begins scanning automatically
 
-6. **Ask the agent** using the preset prompts in the web UI
+6. **Watch the event log** — you'll see the agent in real time:
+   - 🔄 Scan pods with `get_pod_status`
+   - 💭 Detect unhealthy pods and reason about the issue
+   - 🔧 Invoke the fixer agent with a problem description
+   - 🔧 Fixer reads logs, events, describes resources
+   - ✅ Fixer applies the fix (`kubectl_create_secret`, `kubectl_set_resources`, `kubectl_patch_service`)
+   - 🔄 Next cycle detects the next layer
 
-7. **Check Jaeger** — select service `sre-agent` and click "Find Traces". Click on a trace to see:
-   - The full span waterfall: `invoke_agent` → `execute_event_loop_cycle` → `chat` (LLM call) → `execute_tool` (kubectl/PromQL)
-   - How long each LLM call takes vs. each tool call
-   - The tool inputs and outputs in the span logs (click a span → "Logs" tab)
+7. **Check Jaeger** — select service `sre-agent`, click "Find Traces":
+   - Each cycle creates a trace with the full span waterfall
+   - Detector spans with nested fixer agent spans
+   - Tool call timing and inputs/outputs in span logs (click a span → "Logs" tab)
 
-8. **Fix layer 1** (missing secret), then re-ask the agent:
+8. **Check Grafana** — the "Agent Observability" dashboard shows:
+   - vLLM inference latency spiking during agent runs
+   - Redis clients recovering after fixes
+   - Nginx connections stabilizing
+
+9. The agent stops automatically when all pods are healthy.
+
+10. **Verify**:
 ```bash
-kubectl create secret generic db-creds -n workload --from-literal=DB_PASSWORD=demo123
+./strands-agents-observability/chaos/verify.sh
 ```
 
-9. **Fix layer 2** (OOMKill), then re-ask the agent:
-```bash
-kubectl set resources deploy/sample-app -n workload --requests=memory=128Mi --limits=memory=256Mi
-```
+### How It Works
 
-10. **Fix layer 3** (wrong redis port):
-```bash
-kubectl patch svc redis -n workload --type='json' \
-  -p='[{"op":"replace","path":"/spec/ports/0/port","value":6379},{"op":"replace","path":"/spec/ports/0/targetPort","value":6379}]'
-```
+The agent uses the **agent-as-tool** pattern from the Strands SDK:
 
-After each fix, re-ask the agent and check Jaeger — each diagnosis creates a new trace showing the agent peeling back the next layer.
-
-### Autonomous Mode (Auto-Fix)
-
-Instead of manually diagnosing and fixing, you can let the agent detect and fix issues autonomously:
-
-1. Click **🤖 Start Auto-Fix** in the web UI
-2. The agent scans the workload namespace every 60 seconds
-3. When it finds unhealthy pods, it calls a **fixer agent** (agent-as-tool pattern) that diagnoses the root cause and applies the fix
-4. Each cycle creates a fresh agent with clean context — no token bloat across cycles
-5. The loop stops automatically when all pods are healthy, or click **Stop**
-
-The auto-fix uses two agents:
-- **Detector Agent** — lightweight scan with `get_pod_status` + `get_events`. If it finds a problem, it calls `fix_issue`
-- **Fixer Agent** (wrapped as a `@tool`) — deeper diagnosis with logs/prometheus, then applies the fix using `kubectl_create_secret`, `kubectl_set_resources`, or `kubectl_patch_service`
+- **Detector Agent** — scans with `get_pod_status` + `get_events`. If it finds a problem, it calls `fix_issue`
+- **Fixer Agent** (wrapped as a `@tool`) — deeper diagnosis with logs/prometheus, then applies the fix
+- Each cycle creates a fresh agent with clean context — no token bloat across cycles
+- The loop stops when all pods are healthy, or click **Stop**
 
 > **Note on FluxCD:** `inject.sh` suspends the Flux workload kustomization before injecting faults, so neither the chaos nor the agent's fixes get reverted. `verify.sh` resumes it when all checks pass.
 
 > **Production consideration:** In production, the agent should not apply fixes directly. Instead, it would commit the fix to the Git repo (or open a PR) and let FluxCD reconcile — keeping the GitOps single source of truth. A human-in-the-loop approval step on the PR adds a safety gate before changes reach the cluster.
-
-9. **Verify**:
-```bash
-./strands-agents-observability/chaos/verify.sh
-```
 
 ## Architecture
 
@@ -196,9 +183,9 @@ infra (Karpenter GPU NodePool)
 │   └── manifests.yaml                # nginx + redis + sample-app (with exporters)
 ├── agent-app/
 │   ├── manifests.yaml                # K8s Deployment + Service + RBAC
-│   ├── app.py                        # FastAPI SRE agent (streaming SSE)
+│   ├── app.py                        # FastAPI SRE agent (autonomous detect-fix loop)
 │   ├── tools.py                      # 5 diagnostic + 3 fix tools
-│   ├── static/index.html             # Chat web UI
+│   ├── static/index.html             # Auto-fix web UI
 │   ├── Dockerfile
 │   └── requirements.txt
 └── chaos/
