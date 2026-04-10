@@ -150,30 +150,7 @@ After each fix, re-ask the agent and check Jaeger — each diagnosis creates a n
 
 ## Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│  EKS Auto Mode + FluxCD                                         │
-│                                                                  │
-│  Workload                         SRE Agent (FastAPI + Web UI)   │
-│  ┌───────┐ ┌───────┐ ┌──────┐    ┌────────────────────────────┐ │
-│  │ nginx │→│sample │→│redis │    │ / (chat UI)               │ │
-│  │  +exp │ │ -app  │ │ +exp │    │ /diagnose/stream (SSE)    │ │
-│  └───────┘ └───────┘ └──────┘    │ Tools: query_prometheus,  │ │
-│       ↑         │         │      │  get_pod_status, get_logs, │ │
-│  chaos inject   │metrics  │      │  get_events, describe      │ │
-│                 ▼         ▼      └───────────┬────────────────┘ │
-│  ┌────────┐  ┌──────────────┐                │ OTel traces      │
-│  │ vLLM   │  │  Prometheus  │    ┌───────────▼────────────────┐ │
-│  │ (GPU)  │──│  (scrapes    │    │  OTel Collector            │ │
-│  │ Llama  │  │   all)       │    │  → Jaeger (traces)         │ │
-│  └────────┘  └──────┬───────┘    │  → Prometheus (spanmetrics)│ │
-│                     ▼            └────────────────────────────┘ │
-│              ┌──────────────┐                                    │
-│              │   Grafana    │                                    │
-│              │  vLLM|nginx|redis|agent                           │
-│              └──────────────┘                                    │
-└──────────────────────────────────────────────────────────────────┘
-```
+![Architecture](./images/architecture.png)
 
 ## FluxCD Dependency Chain
 
