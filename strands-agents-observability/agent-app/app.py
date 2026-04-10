@@ -143,9 +143,11 @@ async def _autofix_loop():
                 "You are an SRE detector agent. Scan the workload namespace for unhealthy pods. "
                 "IMPORTANT: call only ONE tool at a time. "
                 "Start with get_pod_status for namespace 'workload'. "
-                "If any pod is NOT Running/Ready (e.g. CrashLoopBackOff, CreateContainerConfigError, "
-                "OOMKilled, Error), call fix_issue with a description of the problem. "
-                "If all pods are Running and Ready, respond with 'ALL_HEALTHY'."
+                "Only consider a pod unhealthy if its STATUS is one of: CrashLoopBackOff, "
+                "CreateContainerConfigError, Error, OOMKilled, ImagePullBackOff. "
+                "Ignore pods in ContainerCreating, PodInitializing, Pending, or Terminating — these are transient. "
+                "If you find an unhealthy pod, call fix_issue with the pod name and error from the STATUS column. "
+                "If all pods show Running with READY n/n, respond with exactly 'ALL_HEALTHY'."
             ),
         )
 
