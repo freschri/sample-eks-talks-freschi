@@ -50,6 +50,11 @@ aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" | docker login --use
 
 docker build --platform linux/amd64 -t "${ECR_REPO}:latest" strands-agents-observability/agent-app/
 docker push "${ECR_REPO}:latest"
+
+# Tag with git SHA for Flux rollouts
+GIT_SHA=$(git rev-parse --short HEAD)
+docker tag "${ECR_REPO}:latest" "${ECR_REPO}:${GIT_SHA}"
+docker push "${ECR_REPO}:${GIT_SHA}"
 ```
 
 4. **Create secrets and Flux ConfigMap**:
@@ -70,6 +75,7 @@ metadata:
   namespace: flux-system
 data:
   ECR_REPO: "${ECR_REPO}"
+  IMAGE_TAG: "${GIT_SHA}"
 EOF
 ```
 
