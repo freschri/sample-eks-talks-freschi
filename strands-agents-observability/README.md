@@ -144,26 +144,7 @@ Arrange all three browser windows side by side.
 
 The agent uses the **agent-as-tool** pattern from the Strands SDK with two cooperating agents:
 
-```
-┌──────────────────────────────────────────────────────────┐
-│  Orchestrator loop (Python, no LLM)                      │
-│                                                          │
-│  every 60s:                                              │
-│    ┌─────────────────────┐                               │
-│    │  Detector Agent      │  get_pod_status, get_events  │
-│    │  "Is anything broken?"│                              │
-│    └──────────┬───────────┘                               │
-│               │ problem found                            │
-│               ▼                                          │
-│    ┌─────────────────────┐                               │
-│    │  Fixer Agent (@tool) │  get_pod_logs, get_events,   │
-│    │  "Diagnose and fix"  │  kubectl_create_secret,      │
-│    └──────────────────────┘  kubectl_set_resources,      │
-│                              kubectl_patch_service       │
-│                                                          │
-│  Fresh agent each cycle → clean context, no token bloat  │
-└──────────────────────────────────────────────────────────┘
-```
+![Agent Architecture](./images/agents.png)
 
 - **Detector Agent** — lightweight scan. Calls `get_pod_status` and checks for error states (CrashLoopBackOff, OOMKilled, CreateContainerConfigError). If it finds a problem, it calls `fix_issue` with a description.
 - **Fixer Agent** — wrapped as a `@tool` so the detector can invoke it. Gets a fresh context with only the problem description. Diagnoses deeper with logs and events, then applies the fix. Verifies with `get_pod_status` after.

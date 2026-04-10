@@ -1,0 +1,35 @@
+@startuml agents
+!theme plain
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontSize 12
+skinparam padding 6
+left to right direction
+
+title Agent-as-Tool Pattern — Detect → Diagnose → Fix
+
+rectangle "Orchestrator Loop\n(Python, every 60s)" as orch #F0F4FF {
+
+  rectangle "Detector Agent" as det #E8F5E9 {
+    component "get_pod_status" as gps
+    component "get_events" as ge
+    component "fix_issue\n(@tool)" as fi #FFF3E0
+  }
+}
+
+rectangle "Fixer Agent\n(fresh context per call)" as fixer #FFF3E0 {
+  component "get_pod_logs" as gpl
+  component "get_events" as ge2
+  component "describe_resource" as dr
+  component "kubectl_create_secret" as kcs #FFCDD2
+  component "kubectl_set_resources" as ksr #FFCDD2
+  component "kubectl_patch_service" as kps #FFCDD2
+}
+
+fi -right-> fixer : invokes
+
+actor "Kubernetes\nworkload namespace" as k8s
+
+det ..> k8s : read
+fixer ..> k8s : read + write
+
+@enduml
