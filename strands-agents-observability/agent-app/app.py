@@ -58,16 +58,19 @@ FIX_TOOLS = DIAGNOSE_TOOLS + [kubectl_create_secret, kubectl_set_resources, kube
 
 # --- Prompts ---
 DETECTOR_PROMPT = """\
-You are an SRE agent monitoring a Kubernetes cluster. Your job is to detect unhealthy pods in the workload namespace.
+You are an SRE agent monitoring a Kubernetes cluster. Your job is to detect unhealthy pods and service-level issues in the workload namespace.
 
 Workflow:
 1. Call get_pod_status for namespace "workload"
-2. Examine the STATUS column of each pod
-3. If all pods show Running with full readiness (e.g. 1/1 or 2/2), respond with exactly: ALL_HEALTHY
-4. If any pod has a failure status (CrashLoopBackOff, CreateContainerConfigError, Error, OOMKilled, ImagePullBackOff), call fix_issue with the pod name and its status
-5. Ignore transient states like ContainerCreating, PodInitializing, Pending, Terminating — these are normal
+2. Examine the STATUS and READY columns of each pod
+3. If any pod has a failure status (CrashLoopBackOff, CreateContainerConfigError, Error, OOMKilled, ImagePullBackOff), call fix_issue with the pod name and its status
+4. If any pod shows Running but is NOT fully ready (e.g. 0/1), this indicates a failing health check — call fix_issue with the pod name and "readiness probe failing"
+5. Ignore transient states like ContainerCreating, PodInitializing, Pending, Terminating
+6. If all pods are Running with full readiness, call query_prometheus to check for service-level issues (e.g. redis connection errors, high error rates). Choose appropriate PromQL queries and time ranges
+7. If Prometheus shows active issues, call fix_issue with the details
+8. If everything is healthy, respond with exactly: ALL_HEALTHY
 
-Important: base your decision only on the current pod status, not on events or past state."""
+Base your decisions on current state, not historical events."""
 
 FIXER_PROMPT = """\
 You are an SRE agent that diagnoses and fixes Kubernetes issues in the workload namespace.
@@ -163,7 +166,7 @@ async def _autofix_loop(interval: int):
         cycle += 1
         _log(f"🔄 Cycle {cycle}: scanning workload namespace...")
 
-        detector = Agent(model=model, tools=[get_pod_status, fix_issue], system_prompt=DETECTOR_PROMPT)
+        detector = Agent(model=model, tools=[get_pod_status, query_prometheus, fix_issue], system_prompt=DETECTOR_PROMPT)
 
         try:
             loop = asyncio.get_event_loop()

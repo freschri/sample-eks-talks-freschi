@@ -28,19 +28,30 @@ data:
         import redis as r
 
     db_pw = os.environ["DB_PASSWORD"]
-    rc = r.Redis(host="redis", port=6379, socket_connect_timeout=3)
+    rc = r.Redis(host="redis", port=6379, socket_connect_timeout=2)
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
-            try:
-                rc.ping()
-                self.send_response(200)
-                self.end_headers()
-                self.wfile.write(json.dumps({"status": "ok", "redis": "connected"}).encode())
-            except Exception as e:
-                self.send_response(502)
-                self.end_headers()
-                self.wfile.write(json.dumps({"status": "error", "detail": str(e)}).encode())
+            if self.path == "/healthz":
+                try:
+                    rc.ping()
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(b'ok')
+                except Exception:
+                    self.send_response(503)
+                    self.end_headers()
+                    self.wfile.write(b'redis unreachable')
+            else:
+                try:
+                    rc.ping()
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"status": "ok", "redis": "connected"}).encode())
+                except Exception as e:
+                    self.send_response(502)
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"status": "error", "detail": str(e)}).encode())
 
     print("Starting server on :8080")
     socketserver.TCPServer(("", 8080), Handler).serve_forever()
@@ -138,7 +149,7 @@ spec:
             limits: { cpu: 200m, memory: 256Mi }
           readinessProbe:
             httpGet:
-              path: /
+              path: /healthz
               port: 8080
             initialDelaySeconds: 15
             periodSeconds: 5
