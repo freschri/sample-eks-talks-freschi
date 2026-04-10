@@ -36,6 +36,20 @@ metadata:
 
 autoModeConfig:
   enabled: true
+
+iam:
+  podIdentityAssociations:
+    - namespace: agent-app
+      serviceAccountName: sre-agent
+      createServiceAccount: false
+      permissionPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - "bedrock:InvokeModel"
+              - "bedrock:InvokeModelWithResponseStream"
+            Resource: "*"
 EOF
 ```
 
