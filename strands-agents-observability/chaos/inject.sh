@@ -19,6 +19,9 @@ kubectl set resources deploy/sample-app -n "$NS" --requests=memory=16Mi --limits
 echo ">>> Layer 1: Deleting db-creds secret (will CrashLoop)..."
 kubectl delete secret db-creds -n "$NS" --ignore-not-found
 
+echo ">>> Restarting sample-app to trigger failures..."
+kubectl rollout restart deploy/sample-app -n "$NS"
+
 echo ""
 echo "All 3 faults injected. Flux workload kustomization suspended."
 echo "Fix order: secret → memory → redis port"
