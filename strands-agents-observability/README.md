@@ -214,6 +214,19 @@ infra (Karpenter GPU NodePool)
     └── verify.sh                     # Verify workload health
 ```
 
+## Updating the Agent
+
+After changing `app.py`, `tools.py`, or `index.html`:
+
+```bash
+GIT_SHA=$(git rev-parse --short HEAD)
+docker build --platform linux/amd64 -t "${ECR_REPO}:${GIT_SHA}" strands-agents-observability/agent-app/
+docker push "${ECR_REPO}:${GIT_SHA}"
+kubectl patch configmap cluster-config -n flux-system --type merge -p "{\"data\":{\"IMAGE_TAG\":\"${GIT_SHA}\"}}"
+```
+
+Flux detects the tag change and rolls out the new image automatically.
+
 ## Cleanup
 
 ```bash
