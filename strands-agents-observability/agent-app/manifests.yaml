@@ -52,7 +52,7 @@ spec:
       serviceAccountName: sre-agent
       containers:
         - name: agent
-          image: ${ECR_REPO}:latest
+          image: ${ECR_REPO}:${IMAGE_TAG}
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
