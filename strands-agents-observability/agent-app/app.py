@@ -46,8 +46,8 @@ if MODEL_PROVIDER == "vllm":
 else:
     from strands.models.bedrock import BedrockModel
     model = BedrockModel(
-        model_id=os.environ.get("BEDROCK_MODEL", "us.anthropic.claude-sonnet-4-20250514"),
-        region_name=os.environ.get("AWS_REGION", "us-east-1"),
+        model_id=os.environ.get("BEDROCK_MODEL", "anthropic.claude-sonnet-4-6"),
+        region_name=os.environ.get("AWS_REGION", "eu-west-2"),
     )
 
 logger.info(f"Using model provider: {MODEL_PROVIDER}")
