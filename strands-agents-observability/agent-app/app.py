@@ -4,7 +4,7 @@ import json
 import logging
 import asyncio
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -47,6 +47,8 @@ FIX_TOOLS = DIAGNOSE_TOOLS + [kubectl_create_secret, kubectl_set_resources, kube
 
 # --- Shared event log ---
 _events: list[str] = []
+_autofix_running = False
+_autofix_task = None
 
 
 def _log(msg: str):
@@ -122,14 +124,11 @@ def fix_issue(problem_description: str) -> str:
 
 
 # --- Autonomous loop ---
-_autofix_running = False
-
-
-async def _autofix_loop():
+async def _autofix_loop(interval: int):
     global _autofix_running
     _autofix_running = True
     _events.clear()
-    _log("🤖 Agent started. Watching workload namespace...")
+    _log(f"🤖 Agent started. Scanning every {interval}s...")
 
     cycle = 0
     while _autofix_running:
@@ -138,16 +137,17 @@ async def _autofix_loop():
 
         detector = Agent(
             model=model,
-            tools=[get_pod_status, get_events, fix_issue],
+            tools=[get_pod_status, fix_issue],
             system_prompt=(
                 "You are an SRE detector agent. Scan the workload namespace for unhealthy pods. "
                 "IMPORTANT: call only ONE tool at a time. "
-                "Start with get_pod_status for namespace 'workload'. "
-                "Only consider a pod unhealthy if its STATUS is one of: CrashLoopBackOff, "
-                "CreateContainerConfigError, Error, OOMKilled, ImagePullBackOff. "
+                "Call get_pod_status for namespace 'workload'. "
+                "Only consider a pod unhealthy if its STATUS column shows: CrashLoopBackOff, "
+                "CreateContainerConfigError, Error, OOMKilled, or ImagePullBackOff. "
                 "Ignore pods in ContainerCreating, PodInitializing, Pending, or Terminating — these are transient. "
-                "If you find an unhealthy pod, call fix_issue with the pod name and error from the STATUS column. "
-                "If all pods show Running with READY n/n, respond with exactly 'ALL_HEALTHY'."
+                "If you find an unhealthy pod, call fix_issue with the pod name and the STATUS value. "
+                "If ALL pods show Running with READY n/n, respond with exactly 'ALL_HEALTHY'. "
+                "Do NOT call get_events — only use get_pod_status to decide."
             ),
         )
 
@@ -163,14 +163,14 @@ async def _autofix_loop():
             provider.force_flush()
 
             if "ALL_HEALTHY" in text.upper():
-                _log(f"✅ Cycle {cycle}: All pods healthy. Watching...")
+                _log(f"✅ Cycle {cycle}: All pods healthy.")
             else:
-                _log(f"📋 Cycle {cycle}: done. Next scan in 60s...")
+                _log(f"📋 Cycle {cycle}: done.")
         except Exception as e:
             _log(f"❌ Cycle {cycle}: Error — {e}")
             logger.exception("Autofix error")
 
-        for _ in range(60):
+        for _ in range(interval):
             if not _autofix_running:
                 break
             await asyncio.sleep(1)
@@ -184,9 +184,13 @@ app = FastAPI(title="SRE Agent", description="AI-powered Kubernetes auto-fix")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
 
 
-@app.on_event("startup")
-async def startup():
-    asyncio.create_task(_autofix_loop())
+@app.post("/autofix/start")
+async def autofix_start(interval: int = Query(default=15, ge=5, le=300)):
+    global _autofix_running, _autofix_task
+    if _autofix_running:
+        return {"status": "already_running"}
+    _autofix_task = asyncio.create_task(_autofix_loop(interval))
+    return {"status": "started", "interval": interval}
 
 
 @app.post("/autofix/stop")
