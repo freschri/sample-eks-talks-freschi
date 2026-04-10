@@ -29,7 +29,7 @@ spec:
           image: vllm/vllm-openai:latest
           args:
             - "--model"
-            - "Qwen/Qwen2.5-14B-Instruct-AWQ"
+            - "meta-llama/Llama-3.1-8B-Instruct"
             - "--tensor-parallel-size"
             - "1"
             - "--port"
@@ -39,9 +39,7 @@ spec:
             - "8192"
             - "--enable-auto-tool-choice"
             - "--tool-call-parser"
-            - "hermes"
-            - "--quantization"
-            - "awq"
+            - "llama3_json"
           env:
             - name: HUGGING_FACE_HUB_TOKEN
               valueFrom:
