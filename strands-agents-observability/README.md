@@ -142,12 +142,46 @@ Arrange all three browser windows side by side.
 
 ### How It Works
 
-The agent uses the **agent-as-tool** pattern from the Strands SDK:
+The agent uses the **agent-as-tool** pattern from the Strands SDK with two cooperating agents:
 
-- **Detector Agent** — scans with `get_pod_status` + `get_events`. If it finds a problem, it calls `fix_issue`
-- **Fixer Agent** (wrapped as a `@tool`) — deeper diagnosis with logs/prometheus, then applies the fix
-- Each cycle creates a fresh agent with clean context — no token bloat across cycles
-- The loop stops when all pods are healthy, or click **Stop**
+```
+┌──────────────────────────────────────────────────────────┐
+│  Orchestrator loop (Python, no LLM)                      │
+│                                                          │
+│  every 60s:                                              │
+│    ┌─────────────────────┐                               │
+│    │  Detector Agent      │  get_pod_status, get_events  │
+│    │  "Is anything broken?"│                              │
+│    └──────────┬───────────┘                               │
+│               │ problem found                            │
+│               ▼                                          │
+│    ┌─────────────────────┐                               │
+│    │  Fixer Agent (@tool) │  get_pod_logs, get_events,   │
+│    │  "Diagnose and fix"  │  kubectl_create_secret,      │
+│    └──────────────────────┘  kubectl_set_resources,      │
+│                              kubectl_patch_service       │
+│                                                          │
+│  Fresh agent each cycle → clean context, no token bloat  │
+└──────────────────────────────────────────────────────────┘
+```
+
+- **Detector Agent** — lightweight scan. Calls `get_pod_status` and checks for error states (CrashLoopBackOff, OOMKilled, CreateContainerConfigError). If it finds a problem, it calls `fix_issue` with a description.
+- **Fixer Agent** — wrapped as a `@tool` so the detector can invoke it. Gets a fresh context with only the problem description. Diagnoses deeper with logs and events, then applies the fix. Verifies with `get_pod_status` after.
+
+#### Model limitations and prompt engineering
+
+This demo runs **Llama 3.1 8B** on a single GPU. This is a small model — fast and cheap, but it lacks deep Kubernetes operational knowledge. Without explicit guidance, it will:
+- Treat transient pod states (ContainerCreating, Pending) as failures
+- Hallucinate fixes for problems that don't exist
+- Use placeholder names like "pod-name" instead of real names from tool output
+
+To compensate, the prompts are tightly constrained:
+- Explicit allowlist of error states to react to
+- Explicit ignore list for transient states
+- Instructions to never use placeholder names
+- Instructions to call one tool at a time and analyze results before proceeding
+
+For production, a larger model (70B+, or a managed API like Amazon Bedrock) would reduce the need for this prompt tightening and handle edge cases more reliably.
 
 > **Note on FluxCD:** `inject.sh` suspends the Flux workload kustomization before injecting faults, so neither the chaos nor the agent's fixes get reverted. `verify.sh` resumes it when all checks pass.
 
