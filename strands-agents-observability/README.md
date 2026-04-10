@@ -7,7 +7,7 @@ Code is provided as reference for demo purposes. In a production environment, re
 ## Prerequisites
 
 - AWS account
-- HuggingFace token (for Llama 3.1 8B access)
+- HuggingFace token (optional, for gated model access)
 - **Fork this repository** (Flux will commit its files to it)
 
 ## Deployment
@@ -157,7 +157,7 @@ The agent uses the **agent-as-tool** pattern from the Strands SDK with two coope
 
 #### Model limitations and prompt engineering
 
-This demo runs **Llama 3.1 8B** on a single GPU. This is a small model — fast and cheap, but it lacks deep Kubernetes operational knowledge. Without explicit guidance, it will:
+This demo runs **Qwen 2.5 14B AWQ** (quantized) on a single GPU. While significantly better than 8B models at tool calling and reasoning, it is still a small model. Without explicit guidance, it may:
 - Treat transient pod states (ContainerCreating, Pending) as failures
 - Hallucinate fixes for problems that don't exist
 - Use placeholder names like "pod-name" instead of real names from tool output
@@ -183,7 +183,7 @@ For production, a larger model (70B+, or a managed API like Amazon Bedrock) woul
 ```
 infra (Karpenter GPU NodePool)
   ├── observability (Jaeger, Prometheus, OTel Collector, Grafana)
-  ├── vllm (Llama 3.1 8B on GPU)
+  ├── vllm (Qwen 2.5 14B AWQ on GPU)
   └── workload (nginx + sample-app + redis)
         └── agent-app (SRE agent — depends on all above)
 ```
@@ -199,7 +199,7 @@ infra (Karpenter GPU NodePool)
 │   ├── helm-releases.yaml            # Jaeger, Prometheus, OTel, Grafana
 │   └── dashboard-configmap.yaml      # Grafana dashboard JSON
 ├── vllm/
-│   └── deployment.yaml               # Llama 3.1 8B on GPU
+│   └── deployment.yaml               # Qwen 2.5 14B AWQ on GPU
 ├── workload/
 │   └── manifests.yaml                # nginx + redis + sample-app (with exporters)
 ├── agent-app/

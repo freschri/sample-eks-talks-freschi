@@ -60,7 +60,7 @@ spec:
             - name: VLLM_BASE_URL
               value: "http://vllm-svc.vllm:8000/v1"
             - name: VLLM_MODEL
-              value: "meta-llama/Llama-3.1-8B-Instruct"
+              value: "Qwen/Qwen2.5-14B-Instruct-AWQ"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: "http://otel-collector-opentelemetry-collector.observability:4317"
             - name: OTEL_SERVICE_NAME
