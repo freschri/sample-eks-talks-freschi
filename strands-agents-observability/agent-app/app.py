@@ -128,7 +128,7 @@ async def _autofix_loop():
     global _autofix_running
     _autofix_running = True
     _events.clear()
-    _log("🤖 Auto-fix started. Scanning for issues...")
+    _log("🤖 Agent started. Watching workload namespace...")
 
     cycle = 0
     while _autofix_running:
@@ -160,10 +160,9 @@ async def _autofix_loop():
             provider.force_flush()
 
             if "ALL_HEALTHY" in text.upper():
-                _log(f"✅ Cycle {cycle}: All pods healthy. Stopping.")
-                break
-
-            _log(f"📋 Cycle {cycle}: done. Waiting 60s before next scan...")
+                _log(f"✅ Cycle {cycle}: All pods healthy. Watching...")
+            else:
+                _log(f"📋 Cycle {cycle}: done. Next scan in 60s...")
         except Exception as e:
             _log(f"❌ Cycle {cycle}: Error — {e}")
             logger.exception("Autofix error")
@@ -174,7 +173,7 @@ async def _autofix_loop():
             await asyncio.sleep(1)
 
     _autofix_running = False
-    _log("🛑 Auto-fix stopped.")
+    _log("🛑 Agent stopped.")
 
 
 # --- FastAPI ---
@@ -182,13 +181,9 @@ app = FastAPI(title="SRE Agent", description="AI-powered Kubernetes auto-fix")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
 
 
-@app.post("/autofix/start")
-async def autofix_start():
-    global _autofix_running
-    if _autofix_running:
-        return {"status": "already_running"}
+@app.on_event("startup")
+async def startup():
     asyncio.create_task(_autofix_loop())
-    return {"status": "started"}
 
 
 @app.post("/autofix/stop")

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SRE Agent — Auto-Fix</title>
+<title>SRE Agent</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #c9d1d9; height: 100vh; display: flex; flex-direction: column; }
@@ -11,15 +11,7 @@
   .title { display: flex; align-items: center; gap: 10px; }
   .title h1 { font-size: 16px; font-weight: 600; }
   .title span { font-size: 12px; color: #8b949e; }
-  .controls { display: flex; align-items: center; gap: 10px; }
-  .controls button { padding: 8px 18px; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: 500; }
-  #start { background: #da3633; color: #fff; }
-  #start:hover { background: #f85149; }
-  #start:disabled { background: #21262d; color: #484f58; cursor: not-allowed; }
-  #stop { background: #21262d; color: #484f58; }
-  #stop:not(:disabled) { background: #da3633; color: #fff; cursor: pointer; }
-  #status { font-size: 12px; padding: 4px 10px; border-radius: 10px; background: #21262d; color: #8b949e; }
-  #status.running { background: #1a4731; color: #3fb950; }
+  #status { font-size: 12px; padding: 4px 10px; border-radius: 10px; background: #1a4731; color: #3fb950; }
   #log { flex: 1; overflow-y: auto; padding: 16px 20px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; line-height: 1.8; }
   .ev { padding: 2px 0; border-bottom: 1px solid #161b22; }
   .ev.tool { color: #f0883e; }
@@ -29,29 +21,20 @@
   .ev.fixer { color: #f0883e; font-weight: 500; }
   .ev.ok { color: #3fb950; font-weight: 600; }
   .ev.err { color: #f85149; }
-  .ev.stop { color: #8b949e; font-style: italic; }
-  .empty { color: #484f58; text-align: center; margin-top: 40px; font-size: 14px; }
 </style>
 </head>
 <body>
 <header>
   <div class="title">
-    <h1>🤖 SRE Agent — Auto-Fix</h1>
-    <span>Autonomous detect → diagnose → fix loop</span>
+    <h1>🤖 SRE Agent</h1>
+    <span>Autonomous detect → diagnose → fix</span>
   </div>
-  <div class="controls">
-    <span id="status">Idle</span>
-    <button id="start" onclick="start()">▶ Start</button>
-    <button id="stop" onclick="stop()" disabled>■ Stop</button>
-  </div>
+  <span id="status">Watching</span>
 </header>
-<div id="log"><div class="empty">Click Start to begin scanning the workload namespace for issues.</div></div>
+<div id="log"></div>
 <script>
 const log = document.getElementById('log');
-const startBtn = document.getElementById('start');
-const stopBtn = document.getElementById('stop');
-const statusEl = document.getElementById('status');
-let poll = null, lastCount = 0;
+let lastCount = 0;
 
 function classify(text) {
   if (text.includes('Cycle') && text.includes('scanning')) return 'cycle';
@@ -61,12 +44,10 @@ function classify(text) {
   if (text.includes('✅')) return 'result';
   if (text.includes('❌')) return 'err';
   if (text.includes('💭')) return 'think';
-  if (text.includes('🛑')) return 'stop';
   return '';
 }
 
 function addEv(text) {
-  if (log.querySelector('.empty')) log.innerHTML = '';
   const d = document.createElement('div');
   d.className = 'ev ' + classify(text);
   d.textContent = text;
@@ -74,39 +55,17 @@ function addEv(text) {
   log.scrollTop = log.scrollHeight;
 }
 
-async function start() {
-  lastCount = 0;
-  log.innerHTML = '';
-  await fetch('/autofix/start', {method:'POST'});
-  startBtn.disabled = true;
-  stopBtn.disabled = false;
-  statusEl.textContent = 'Running';
-  statusEl.className = 'running';
-  poll = setInterval(pollEvents, 2000);
-}
-
-async function stop() {
-  await fetch('/autofix/stop', {method:'POST'});
-  setIdle();
-}
-
-function setIdle() {
-  startBtn.disabled = false;
-  stopBtn.disabled = true;
-  statusEl.textContent = 'Idle';
-  statusEl.className = '';
-  if (poll) { clearInterval(poll); poll = null; }
-}
-
-async function pollEvents() {
+async function poll() {
   try {
     const r = await fetch('/autofix/events');
     const d = await r.json();
     for (let i = lastCount; i < d.events.length; i++) addEv(d.events[i]);
     lastCount = d.events.length;
-    if (!d.running) setIdle();
   } catch(e) {}
 }
+
+setInterval(poll, 2000);
+poll();
 </script>
 </body>
 </html>
