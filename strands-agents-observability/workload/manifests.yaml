@@ -28,13 +28,14 @@ data:
         import redis as r
 
     db_pw = os.environ["DB_PASSWORD"]
-    rc = r.Redis(host="redis", port=6379, socket_connect_timeout=2)
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
             if self.path == "/healthz":
                 try:
-                    rc.ping()
+                    c = r.Redis(host="redis", port=6379, socket_connect_timeout=2)
+                    c.ping()
+                    c.close()
                     self.send_response(200)
                     self.end_headers()
                     self.wfile.write(b'ok')
@@ -44,7 +45,9 @@ data:
                     self.wfile.write(b'redis unreachable')
             else:
                 try:
-                    rc.ping()
+                    c = r.Redis(host="redis", port=6379, socket_connect_timeout=2)
+                    c.ping()
+                    c.close()
                     self.send_response(200)
                     self.end_headers()
                     self.wfile.write(json.dumps({"status": "ok", "redis": "connected"}).encode())
