@@ -57,10 +57,16 @@ spec:
           ports:
             - containerPort: 8000
           env:
+            - name: MODEL_PROVIDER
+              value: "bedrock"
+            - name: BEDROCK_MODEL
+              value: "us.anthropic.claude-sonnet-4-20250514"
+            - name: AWS_REGION
+              value: "us-east-1"
             - name: VLLM_BASE_URL
               value: "http://vllm-svc.vllm:8000/v1"
             - name: VLLM_MODEL
-              value: "Qwen/Qwen2.5-14B-Instruct-AWQ"
+              value: "meta-llama/Llama-3.1-8B-Instruct"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: "http://otel-collector-opentelemetry-collector.observability:4317"
             - name: OTEL_SERVICE_NAME

@@ -15,7 +15,6 @@ from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExport
 from opentelemetry.sdk.resources import Resource
 
 from strands import Agent, tool
-from strands.models.openai import OpenAIModel
 from tools import (
     query_prometheus, get_pod_status, get_pod_logs, get_events, describe_resource,
     kubectl_create_secret, kubectl_set_resources, kubectl_patch_service,
@@ -31,19 +30,60 @@ provider = TracerProvider(resource=resource)
 provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=OTEL_ENDPOINT, insecure=True)))
 trace.set_tracer_provider(provider)
 
-# --- vLLM model ---
-model = OpenAIModel(
-    client_args={
-        "base_url": os.environ.get("VLLM_BASE_URL", "http://vllm-svc.vllm:8000/v1"),
-        "api_key": "not-needed",
-    },
-    model_id=os.environ.get("VLLM_MODEL", "meta-llama/Llama-3.1-8B-Instruct"),
-    params={"parallel_tool_calls": False},
-)
+# --- Model setup (Bedrock default, vLLM optional) ---
+MODEL_PROVIDER = os.environ.get("MODEL_PROVIDER", "bedrock")
+
+if MODEL_PROVIDER == "vllm":
+    from strands.models.openai import OpenAIModel
+    model = OpenAIModel(
+        client_args={
+            "base_url": os.environ.get("VLLM_BASE_URL", "http://vllm-svc.vllm:8000/v1"),
+            "api_key": "not-needed",
+        },
+        model_id=os.environ.get("VLLM_MODEL", "meta-llama/Llama-3.1-8B-Instruct"),
+        params={"parallel_tool_calls": False},
+    )
+else:
+    from strands.models.bedrock import BedrockModel
+    model = BedrockModel(
+        model_id=os.environ.get("BEDROCK_MODEL", "us.anthropic.claude-sonnet-4-20250514"),
+        region_name=os.environ.get("AWS_REGION", "us-east-1"),
+    )
+
+logger.info(f"Using model provider: {MODEL_PROVIDER}")
 
 # --- Tools ---
 DIAGNOSE_TOOLS = [query_prometheus, get_pod_status, get_pod_logs, get_events, describe_resource]
 FIX_TOOLS = DIAGNOSE_TOOLS + [kubectl_create_secret, kubectl_set_resources, kubectl_patch_service]
+
+# --- Prompts ---
+DETECTOR_PROMPT = """\
+You are an SRE agent monitoring a Kubernetes cluster. Your job is to detect unhealthy pods in the workload namespace.
+
+Workflow:
+1. Call get_pod_status for namespace "workload"
+2. Examine the STATUS column of each pod
+3. If all pods show Running with full readiness (e.g. 1/1 or 2/2), respond with exactly: ALL_HEALTHY
+4. If any pod has a failure status (CrashLoopBackOff, CreateContainerConfigError, Error, OOMKilled, ImagePullBackOff), call fix_issue with the pod name and its status
+5. Ignore transient states like ContainerCreating, PodInitializing, Pending, Terminating — these are normal
+
+Important: base your decision only on the current pod status, not on events or past state."""
+
+FIXER_PROMPT = """\
+You are an SRE agent that diagnoses and fixes Kubernetes issues in the workload namespace.
+
+You have diagnostic tools (get_events, get_pod_logs, describe_resource, query_prometheus) and fix tools (kubectl_create_secret, kubectl_set_resources, kubectl_patch_service).
+
+Workflow:
+1. Start by calling get_events for namespace "workload" to understand the root cause
+2. If needed, use get_pod_logs or describe_resource for more detail
+3. Apply the appropriate fix — match the error to the right tool:
+   - "secret not found" → kubectl_create_secret
+   - OOMKilled → kubectl_set_resources (increase memory)
+   - Connection refused on wrong port → kubectl_patch_service
+4. After fixing, call get_pod_status for namespace "workload" to verify
+
+Use real resource names from tool output. Never guess or use placeholders."""
 
 # --- Shared event log ---
 _events: list[str] = []
@@ -97,25 +137,13 @@ def fix_issue(problem_description: str) -> str:
     """Diagnose the root cause of a Kubernetes issue and apply a fix.
 
     Args:
-        problem_description: Description of the problem detected.
+        problem_description: Description of the problem detected, including pod name and status.
 
     Returns:
         Summary of what was fixed.
     """
     _log(f"🔧 Fixer agent invoked: {problem_description[:200]}")
-    fixer = Agent(
-        model=model,
-        tools=FIX_TOOLS,
-        system_prompt=(
-            "You are an SRE agent that fixes Kubernetes issues. "
-            "You have tools to create secrets, set resource limits, and patch services. "
-            "IMPORTANT: call only ONE tool at a time. "
-            "NEVER use placeholder names like 'pod-name' — always use real names from tool output. "
-            "First call get_events for namespace 'workload' to understand the root cause. "
-            "Then apply the fix using the appropriate tool. Only fix in the 'workload' namespace. "
-            "After fixing, call get_pod_status for namespace 'workload' to verify."
-        ),
-    )
+    fixer = Agent(model=model, tools=FIX_TOOLS, system_prompt=FIXER_PROMPT)
     result = fixer(problem_description)
     for action in _extract_actions(fixer):
         _log(action)
@@ -128,33 +156,19 @@ async def _autofix_loop(interval: int):
     global _autofix_running
     _autofix_running = True
     _events.clear()
-    _log(f"🤖 Agent started. Scanning every {interval}s...")
+    _log(f"🤖 Agent started ({MODEL_PROVIDER}). Scanning every {interval}s...")
 
     cycle = 0
     while _autofix_running:
         cycle += 1
         _log(f"🔄 Cycle {cycle}: scanning workload namespace...")
 
-        detector = Agent(
-            model=model,
-            tools=[get_pod_status, fix_issue],
-            system_prompt=(
-                "You are an SRE detector agent. Scan the workload namespace for unhealthy pods. "
-                "IMPORTANT: call only ONE tool at a time. "
-                "Call get_pod_status for namespace 'workload'. "
-                "Only consider a pod unhealthy if its STATUS column shows: CrashLoopBackOff, "
-                "CreateContainerConfigError, Error, OOMKilled, or ImagePullBackOff. "
-                "Ignore pods in ContainerCreating, PodInitializing, Pending, or Terminating — these are transient. "
-                "If you find an unhealthy pod, call fix_issue with the pod name and the STATUS value. "
-                "If ALL pods show Running with READY n/n, respond with exactly 'ALL_HEALTHY'. "
-                "Do NOT call get_events — only use get_pod_status to decide."
-            ),
-        )
+        detector = Agent(model=model, tools=[get_pod_status, fix_issue], system_prompt=DETECTOR_PROMPT)
 
         try:
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
-                None, lambda: detector("Scan the workload namespace for issues and fix any you find.")
+                None, lambda: detector("Scan the workload namespace for unhealthy pods.")
             )
             for action in _extract_actions(detector):
                 _log(action)

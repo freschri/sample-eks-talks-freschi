@@ -7,7 +7,7 @@ Code is provided as reference for demo purposes. In a production environment, re
 ## Prerequisites
 
 - AWS account
-- HuggingFace token (optional, for gated model access)
+- HuggingFace token (only needed if using vLLM with Llama)
 - **Fork this repository** (Flux will commit its files to it)
 
 ## Deployment
@@ -155,20 +155,18 @@ The agent uses the **agent-as-tool** pattern from the Strands SDK with two coope
 - **Detector Agent** — lightweight scan. Calls `get_pod_status` and checks for error states (CrashLoopBackOff, OOMKilled, CreateContainerConfigError). If it finds a problem, it calls `fix_issue` with a description.
 - **Fixer Agent** — wrapped as a `@tool` so the detector can invoke it. Gets a fresh context with only the problem description. Diagnoses deeper with logs and events, then applies the fix. Verifies with `get_pod_status` after.
 
-#### Model limitations and prompt engineering
+#### Model configuration
 
-This demo runs **Qwen 2.5 14B AWQ** (quantized) on a single GPU. While significantly better than 8B models at tool calling and reasoning, it is still a small model. Without explicit guidance, it may:
-- Treat transient pod states (ContainerCreating, Pending) as failures
-- Hallucinate fixes for problems that don't exist
-- Use placeholder names like "pod-name" instead of real names from tool output
+The agent supports two model providers, configured via the `MODEL_PROVIDER` environment variable:
 
-To compensate, the prompts are tightly constrained:
-- Explicit allowlist of error states to react to
-- Explicit ignore list for transient states
-- Instructions to never use placeholder names
-- Instructions to call one tool at a time and analyze results before proceeding
+| Provider | Model | Pros | Cons |
+|---|---|---|---|
+| **bedrock** (default) | Claude Sonnet 4 | Reliable tool calling, strong reasoning, no GPU needed | API latency, pay-per-token |
+| **vllm** (optional) | Llama 3.1 8B (self-hosted) | In-cluster, low latency, vLLM metrics in Grafana | Requires GPU node, weaker reasoning, needs tighter prompts |
 
-For production, a larger model (70B+, or a managed API like Amazon Bedrock) would reduce the need for this prompt tightening and handle edge cases more reliably.
+To switch to vLLM, set `MODEL_PROVIDER=vllm` in the agent-app manifest. The vLLM deployment and GPU NodePool are included but optional when using Bedrock.
+
+When using smaller self-hosted models, prompts need to be more prescriptive to avoid hallucinations (e.g. explicit error state allowlists, instructions to never use placeholder names). With Bedrock/Claude, the prompts can be more natural and workflow-oriented.
 
 > **Note on FluxCD:** `inject.sh` suspends the Flux workload kustomization before injecting faults, so neither the chaos nor the agent's fixes get reverted. `verify.sh` resumes it when all checks pass.
 
@@ -183,7 +181,7 @@ For production, a larger model (70B+, or a managed API like Amazon Bedrock) woul
 ```
 infra (Karpenter GPU NodePool)
   ├── observability (Jaeger, Prometheus, OTel Collector, Grafana)
-  ├── vllm (Qwen 2.5 14B AWQ on GPU)
+  ├── vllm (Llama 3.1 8B on GPU — optional)
   └── workload (nginx + sample-app + redis)
         └── agent-app (SRE agent — depends on all above)
 ```
@@ -199,7 +197,7 @@ infra (Karpenter GPU NodePool)
 │   ├── helm-releases.yaml            # Jaeger, Prometheus, OTel, Grafana
 │   └── dashboard-configmap.yaml      # Grafana dashboard JSON
 ├── vllm/
-│   └── deployment.yaml               # Qwen 2.5 14B AWQ on GPU
+│   └── deployment.yaml               # Llama 3.1 8B on GPU (optional)
 ├── workload/
 │   └── manifests.yaml                # nginx + redis + sample-app (with exporters)
 ├── agent-app/
