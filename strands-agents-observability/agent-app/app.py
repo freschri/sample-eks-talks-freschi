@@ -108,9 +108,10 @@ def fix_issue(problem_description: str) -> str:
             "You are an SRE agent that fixes Kubernetes issues. "
             "You have tools to create secrets, set resource limits, and patch services. "
             "IMPORTANT: call only ONE tool at a time. "
-            "First diagnose the root cause using get_pod_logs, get_events, describe_resource. "
-            "Then apply the fix. Only fix in the 'workload' namespace. "
-            "After fixing, verify with get_pod_status."
+            "NEVER use placeholder names like 'pod-name' — always use real names from tool output. "
+            "First call get_events for namespace 'workload' to understand the root cause. "
+            "Then apply the fix using the appropriate tool. Only fix in the 'workload' namespace. "
+            "After fixing, call get_pod_status for namespace 'workload' to verify."
         ),
     )
     result = fixer(problem_description)
