@@ -1,14 +1,12 @@
-"""SRE Agent — FastAPI server with streaming SSE and web UI."""
+"""SRE Agent — FastAPI server with autonomous detect-fix loop."""
 import os
 import json
 import logging
 import asyncio
-import concurrent.futures
 
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
@@ -16,9 +14,12 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
 
-from strands import Agent
+from strands import Agent, tool
 from strands.models.openai import OpenAIModel
-from tools import query_prometheus, get_pod_status, get_pod_logs, get_events, describe_resource
+from tools import (
+    query_prometheus, get_pod_status, get_pod_logs, get_events, describe_resource,
+    kubectl_create_secret, kubectl_set_resources, kubectl_patch_service,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -40,118 +41,166 @@ model = OpenAIModel(
     params={"parallel_tool_calls": False},
 )
 
-ALL_TOOLS = [query_prometheus, get_pod_status, get_pod_logs, get_events, describe_resource]
+# --- Tools ---
+DIAGNOSE_TOOLS = [query_prometheus, get_pod_status, get_pod_logs, get_events, describe_resource]
+FIX_TOOLS = DIAGNOSE_TOOLS + [kubectl_create_secret, kubectl_set_resources, kubectl_patch_service]
 
-SYSTEM_PROMPT = (
-    "You are an expert SRE agent. You diagnose Kubernetes application issues "
-    "by systematically using your tools. IMPORTANT: call only ONE tool at a time, "
-    "then analyze the result before deciding the next step. "
-    "Start with get_pod_status, then get_events, then dig deeper with get_pod_logs "
-    "and query_prometheus. Be specific about root causes and suggest exact fix commands."
-)
+# --- Shared event log ---
+_events: list[str] = []
+
+
+def _log(msg: str):
+    _events.append(msg)
+    logger.info(msg)
+
+
+def _extract_actions(agent) -> list[str]:
+    """Extract tool calls and reasoning from agent messages."""
+    actions = []
+    for msg in agent.messages:
+        role = msg.get("role", "")
+        if role == "assistant":
+            for block in msg.get("content", []):
+                if "toolUse" in block:
+                    actions.append(f"  🔧 {block['toolUse']['name']}({_summarize_input(block['toolUse'].get('input', {}))})")
+                elif "text" in block:
+                    text = block["text"].strip()
+                    if text:
+                        actions.append(f"  💭 {text[:300]}")
+        elif role == "tool":
+            for block in msg.get("content", []):
+                if "toolResult" in block:
+                    tr = block["toolResult"]
+                    icon = "✅" if tr.get("status") == "success" else "❌"
+                    content = ""
+                    for c in tr.get("content", []):
+                        if "text" in c:
+                            content = c["text"][:200]
+                            break
+                    actions.append(f"  {icon} {content}")
+    return actions
+
+
+def _summarize_input(inp: dict) -> str:
+    parts = []
+    for k, v in inp.items():
+        s = str(v)
+        parts.append(f"{k}={s[:60]}")
+    return ", ".join(parts)
+
+
+# --- Fixer agent-as-tool ---
+@tool
+def fix_issue(problem_description: str) -> str:
+    """Diagnose the root cause of a Kubernetes issue and apply a fix.
+
+    Args:
+        problem_description: Description of the problem detected.
+
+    Returns:
+        Summary of what was fixed.
+    """
+    _log(f"🔧 Fixer agent invoked: {problem_description[:200]}")
+    fixer = Agent(
+        model=model,
+        tools=FIX_TOOLS,
+        system_prompt=(
+            "You are an SRE agent that fixes Kubernetes issues. "
+            "You have tools to create secrets, set resource limits, and patch services. "
+            "IMPORTANT: call only ONE tool at a time. "
+            "First diagnose the root cause using get_pod_logs, get_events, describe_resource. "
+            "Then apply the fix. Only fix in the 'workload' namespace. "
+            "After fixing, verify with get_pod_status."
+        ),
+    )
+    result = fixer(problem_description)
+    for action in _extract_actions(fixer):
+        _log(action)
+    provider.force_flush()
+    return str(result)
+
+
+# --- Autonomous loop ---
+_autofix_running = False
+
+
+async def _autofix_loop():
+    global _autofix_running
+    _autofix_running = True
+    _events.clear()
+    _log("🤖 Auto-fix started. Scanning for issues...")
+
+    cycle = 0
+    while _autofix_running:
+        cycle += 1
+        _log(f"🔄 Cycle {cycle}: scanning workload namespace...")
+
+        detector = Agent(
+            model=model,
+            tools=[get_pod_status, get_events, fix_issue],
+            system_prompt=(
+                "You are an SRE detector agent. Scan the workload namespace for unhealthy pods. "
+                "IMPORTANT: call only ONE tool at a time. "
+                "Start with get_pod_status for namespace 'workload'. "
+                "If any pod is NOT Running/Ready (e.g. CrashLoopBackOff, CreateContainerConfigError, "
+                "OOMKilled, Error), call fix_issue with a description of the problem. "
+                "If all pods are Running and Ready, respond with 'ALL_HEALTHY'."
+            ),
+        )
+
+        try:
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None, lambda: detector("Scan the workload namespace for issues and fix any you find.")
+            )
+            for action in _extract_actions(detector):
+                _log(action)
+
+            text = str(result)
+            provider.force_flush()
+
+            if "ALL_HEALTHY" in text.upper():
+                _log(f"✅ Cycle {cycle}: All pods healthy. Stopping.")
+                break
+
+            _log(f"📋 Cycle {cycle}: done. Waiting 60s before next scan...")
+        except Exception as e:
+            _log(f"❌ Cycle {cycle}: Error — {e}")
+            logger.exception("Autofix error")
+
+        for _ in range(60):
+            if not _autofix_running:
+                break
+            await asyncio.sleep(1)
+
+    _autofix_running = False
+    _log("🛑 Auto-fix stopped.")
+
 
 # --- FastAPI ---
-app = FastAPI(title="SRE Agent", description="AI-powered Kubernetes diagnostics")
+app = FastAPI(title="SRE Agent", description="AI-powered Kubernetes auto-fix")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
 
 
-class DiagnoseRequest(BaseModel):
-    prompt: str
+@app.post("/autofix/start")
+async def autofix_start():
+    global _autofix_running
+    if _autofix_running:
+        return {"status": "already_running"}
+    asyncio.create_task(_autofix_loop())
+    return {"status": "started"}
 
 
-class DiagnoseResponse(BaseModel):
-    response: str
+@app.post("/autofix/stop")
+async def autofix_stop():
+    global _autofix_running
+    _autofix_running = False
+    return {"status": "stopping"}
 
 
-def _sse(event: str, data: str) -> str:
-    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
-
-
-async def _stream_agent(prompt: str):
-    """Run agent and yield SSE events by polling agent.messages."""
-    agent = Agent(
-        model=model,
-        tools=ALL_TOOLS,
-        system_prompt=SYSTEM_PROMPT,
-    )
-
-    loop = asyncio.get_event_loop()
-    error_holder = {}
-
-    def run_agent():
-        try:
-            return agent(prompt)
-        except Exception as e:
-            error_holder["error"] = str(e)
-            logger.exception("Agent error")
-            return None
-
-    with concurrent.futures.ThreadPoolExecutor() as pool:
-        future = pool.submit(run_agent)
-        last_len = 0
-
-        while not future.done():
-            await asyncio.sleep(0.5)
-            msgs = agent.messages
-            if len(msgs) > last_len:
-                for msg in msgs[last_len:]:
-                    for ev in _extract_events(msg):
-                        yield ev
-                last_len = len(msgs)
-
-        # Collect any remaining messages
-        future.result()
-        msgs = agent.messages
-        for msg in msgs[last_len:]:
-            for ev in _extract_events(msg):
-                yield ev
-
-    if "error" in error_holder:
-        yield _sse("error", error_holder["error"])
-
-    provider.force_flush()
-    yield _sse("done", "")
-
-
-def _extract_events(msg):
-    """Extract SSE events from a single Strands message."""
-    role = msg.get("role", "")
-    if role == "assistant":
-        for block in msg.get("content", []):
-            if "toolUse" in block:
-                yield _sse("tool_call", f"🔧 Calling {block['toolUse']['name']}...")
-            elif "text" in block:
-                text = block["text"].strip()
-                if text:
-                    yield _sse("text", text)
-    elif role == "tool":
-        for block in msg.get("content", []):
-            if "toolResult" in block:
-                tr = block["toolResult"]
-                status = "✅" if tr.get("status") == "success" else "❌"
-                content = ""
-                for c in tr.get("content", []):
-                    if "text" in c:
-                        content = c["text"][:300]
-                        break
-                yield _sse("tool_result", f"{status} {content}")
-
-
-@app.post("/diagnose/stream")
-async def diagnose_stream(req: DiagnoseRequest):
-    return StreamingResponse(
-        _stream_agent(req.prompt),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
-
-
-@app.post("/diagnose", response_model=DiagnoseResponse)
-def diagnose(req: DiagnoseRequest):
-    agent = Agent(model=model, tools=ALL_TOOLS, system_prompt=SYSTEM_PROMPT)
-    result = agent(req.prompt)
-    provider.force_flush()
-    return DiagnoseResponse(response=str(result))
+@app.get("/autofix/events")
+async def autofix_events():
+    return {"running": _autofix_running, "events": _events}
 
 
 @app.get("/", response_class=HTMLResponse)

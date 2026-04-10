@@ -45,6 +45,8 @@ fi
 echo ""
 if $OK; then
   echo "🎉 All checks passed — workload is healthy!"
+  echo ">>> Resuming Flux workload kustomization..."
+  flux resume kustomization workload
 else
   echo "⚠️  Some checks failed — keep fixing!"
 fi

@@ -106,60 +106,56 @@ kubectl port-forward svc/jaeger 16686:16686 -n observability &
 2. Open Grafana: http://localhost:3000 (admin / agent-obs-demo)
 3. Open Jaeger: http://localhost:16686
 
+Arrange all three browser windows side by side.
+
 4. **Inject chaos**:
 ```bash
 ./strands-agents-observability/chaos/inject.sh
 ```
 
-5. **Ask the agent** using the preset prompts in the web UI
+5. **Click ▶ Start** in the UI — the agent begins scanning automatically
 
-6. **Fix layer 1** (missing secret), then re-ask:
-```bash
-kubectl create secret generic db-creds -n workload --from-literal=DB_PASSWORD=demo123
-```
+6. **Watch the event log** — you'll see the agent in real time:
+   - 🔄 Scan pods with `get_pod_status`
+   - 💭 Detect unhealthy pods and reason about the issue
+   - 🔧 Invoke the fixer agent with a problem description
+   - 🔧 Fixer reads logs, events, describes resources
+   - ✅ Fixer applies the fix (`kubectl_create_secret`, `kubectl_set_resources`, `kubectl_patch_service`)
+   - 🔄 Next cycle detects the next layer
 
-7. **Fix layer 2** (OOMKill), then re-ask:
-```bash
-kubectl set resources deploy/sample-app -n workload --requests=memory=128Mi --limits=memory=256Mi
-```
+7. **Check Jaeger** — select service `sre-agent`, click "Find Traces":
+   - Each cycle creates a trace with the full span waterfall
+   - Detector spans with nested fixer agent spans
+   - Tool call timing and inputs/outputs in span logs (click a span → "Logs" tab)
 
-8. **Fix layer 3** (wrong redis port):
-```bash
-kubectl patch svc redis -n workload --type='json' \
-  -p='[{"op":"replace","path":"/spec/ports/0/port","value":6379},{"op":"replace","path":"/spec/ports/0/targetPort","value":6379}]'
-```
+8. **Check Grafana** — the "Agent Observability" dashboard shows:
+   - vLLM inference latency spiking during agent runs
+   - Redis clients recovering after fixes
+   - Nginx connections stabilizing
 
-9. **Verify**:
+9. The agent stops automatically when all pods are healthy.
+
+10. **Verify**:
 ```bash
 ./strands-agents-observability/chaos/verify.sh
 ```
 
+### How It Works
+
+The agent uses the **agent-as-tool** pattern from the Strands SDK:
+
+- **Detector Agent** — scans with `get_pod_status` + `get_events`. If it finds a problem, it calls `fix_issue`
+- **Fixer Agent** (wrapped as a `@tool`) — deeper diagnosis with logs/prometheus, then applies the fix
+- Each cycle creates a fresh agent with clean context — no token bloat across cycles
+- The loop stops when all pods are healthy, or click **Stop**
+
+> **Note on FluxCD:** `inject.sh` suspends the Flux workload kustomization before injecting faults, so neither the chaos nor the agent's fixes get reverted. `verify.sh` resumes it when all checks pass.
+
+> **Production consideration:** In production, the agent should not apply fixes directly. Instead, it would commit the fix to the Git repo (or open a PR) and let FluxCD reconcile — keeping the GitOps single source of truth. A human-in-the-loop approval step on the PR adds a safety gate before changes reach the cluster.
+
 ## Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│  EKS Auto Mode + FluxCD                                         │
-│                                                                  │
-│  Workload                         SRE Agent (FastAPI + Web UI)   │
-│  ┌───────┐ ┌───────┐ ┌──────┐    ┌────────────────────────────┐ │
-│  │ nginx │→│sample │→│redis │    │ / (chat UI)               │ │
-│  │  +exp │ │ -app  │ │ +exp │    │ /diagnose/stream (SSE)    │ │
-│  └───────┘ └───────┘ └──────┘    │ Tools: query_prometheus,  │ │
-│       ↑         │         │      │  get_pod_status, get_logs, │ │
-│  chaos inject   │metrics  │      │  get_events, describe      │ │
-│                 ▼         ▼      └───────────┬────────────────┘ │
-│  ┌────────┐  ┌──────────────┐                │ OTel traces      │
-│  │ vLLM   │  │  Prometheus  │    ┌───────────▼────────────────┐ │
-│  │ (GPU)  │──│  (scrapes    │    │  OTel Collector            │ │
-│  │ Llama  │  │   all)       │    │  → Jaeger (traces)         │ │
-│  └────────┘  └──────┬───────┘    │  → Prometheus (spanmetrics)│ │
-│                     ▼            └────────────────────────────┘ │
-│              ┌──────────────┐                                    │
-│              │   Grafana    │                                    │
-│              │  vLLM|nginx|redis|agent                           │
-│              └──────────────┘                                    │
-└──────────────────────────────────────────────────────────────────┘
-```
+![Architecture](./images/architecture.png)
 
 ## FluxCD Dependency Chain
 
@@ -187,9 +183,9 @@ infra (Karpenter GPU NodePool)
 │   └── manifests.yaml                # nginx + redis + sample-app (with exporters)
 ├── agent-app/
 │   ├── manifests.yaml                # K8s Deployment + Service + RBAC
-│   ├── app.py                        # FastAPI SRE agent (streaming SSE)
-│   ├── tools.py                      # 5 diagnostic tools
-│   ├── static/index.html             # Chat web UI
+│   ├── app.py                        # FastAPI SRE agent (autonomous detect-fix loop)
+│   ├── tools.py                      # 5 diagnostic + 3 fix tools
+│   ├── static/index.html             # Auto-fix web UI
 │   ├── Dockerfile
 │   └── requirements.txt
 └── chaos/

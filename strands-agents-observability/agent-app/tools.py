@@ -95,4 +95,67 @@ def describe_resource(resource: str, name: str, namespace: str) -> str:
     return _kubectl("describe", resource, name, "-n", namespace)
 
 
+# --- Fix tools (write operations, scoped to workload namespace) ---
+
+ALLOWED_NS = "workload"
+
+
+def _check_ns(namespace: str):
+    if namespace != ALLOWED_NS:
+        raise ValueError(f"Write operations only allowed in '{ALLOWED_NS}' namespace")
+
+
+@tool
+def kubectl_create_secret(name: str, namespace: str, data: dict) -> str:
+    """Create an opaque Kubernetes secret with literal key-value pairs.
+
+    Args:
+        name: Secret name.
+        namespace: Must be 'workload'.
+        data: Dict of key-value pairs, e.g. {"DB_PASSWORD": "demo123"}.
+
+    Returns:
+        kubectl output.
+    """
+    _check_ns(namespace)
+    args = ["create", "secret", "generic", name, "-n", namespace]
+    for k, v in data.items():
+        args.append(f"--from-literal={k}={v}")
+    return _kubectl(*args)
+
+
+@tool
+def kubectl_set_resources(deployment: str, namespace: str, requests_memory: str, limits_memory: str) -> str:
+    """Set memory requests and limits on a deployment.
+
+    Args:
+        deployment: Deployment name.
+        namespace: Must be 'workload'.
+        requests_memory: Memory request, e.g. '128Mi'.
+        limits_memory: Memory limit, e.g. '256Mi'.
+
+    Returns:
+        kubectl output.
+    """
+    _check_ns(namespace)
+    return _kubectl("set", "resources", f"deploy/{deployment}", "-n", namespace,
+                     f"--requests=memory={requests_memory}", f"--limits=memory={limits_memory}")
+
+
+@tool
+def kubectl_patch_service(name: str, namespace: str, patch_json: str) -> str:
+    """Patch a Kubernetes service using a JSON strategic merge patch.
+
+    Args:
+        name: Service name.
+        namespace: Must be 'workload'.
+        patch_json: JSON patch string, e.g. '{"spec":{"ports":[{"port":6379,"targetPort":6379}]}}'.
+
+    Returns:
+        kubectl output.
+    """
+    _check_ns(namespace)
+    return _kubectl("patch", "svc", name, "-n", namespace, "-p", patch_json)
+
+
 import urllib.parse  # noqa: E402 — needed by query_prometheus

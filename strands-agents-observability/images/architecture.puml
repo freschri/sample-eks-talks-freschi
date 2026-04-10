@@ -1,0 +1,64 @@
+@startuml architecture
+!theme plain
+skinparam backgroundColor #FEFEFE
+skinparam componentStyle rectangle
+skinparam defaultFontSize 12
+skinparam padding 6
+left to right direction
+
+title Agent Observability Demo — Architecture
+
+actor "User" as user
+
+rectangle "EKS Auto Mode + FluxCD" as eks #F0F4FF {
+
+  rectangle "Workload" as wk #FFF3E0 {
+    component "nginx\n+exporter" as nginx
+    component "sample-app" as app
+    component "redis\n+exporter" as redis
+  }
+
+  rectangle "Agent" as an #E8F5E9 {
+    component "SRE Agent\nFastAPI + Web UI" as agent
+  }
+
+  rectangle "vLLM" as vn #F3E5F5 {
+    component "Llama 3.1 8B\n(GPU node)" as vllm
+  }
+
+  rectangle "Observability" as obs #E3F2FD {
+    component "OTel Collector" as otel
+    component "Jaeger" as jaeger
+    component "Prometheus" as prom
+    component "Grafana" as grafana
+  }
+}
+
+' Workload chain
+nginx --> app : proxy
+app --> redis : connect
+
+' User
+user --> agent : Chat UI
+user ..> wk : chaos inject
+
+' Agent interactions
+agent --> vllm : LLM inference
+agent --> otel : OTLP traces
+agent ..> wk : kubectl (diagnose)
+agent ..> prom : PromQL
+
+' OTel pipeline
+otel --> jaeger : traces
+otel --> prom : spanmetrics
+
+' Prometheus scraping
+nginx ..> prom : metrics
+redis ..> prom : metrics
+vllm ..> prom : metrics
+
+' Grafana
+grafana --> prom
+grafana --> jaeger
+
+@enduml
