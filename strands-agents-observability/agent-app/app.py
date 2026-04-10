@@ -53,12 +53,12 @@ else:
 logger.info(f"Using model provider: {MODEL_PROVIDER}")
 
 # --- Tools ---
-DIAGNOSE_TOOLS = [query_prometheus, get_pod_status, get_pod_logs, get_events, describe_resource]
+DIAGNOSE_TOOLS = [get_pod_status, get_pod_logs, get_events, describe_resource]
 FIX_TOOLS = DIAGNOSE_TOOLS + [kubectl_create_secret, kubectl_set_resources, kubectl_patch_service]
 
 # --- Prompts ---
 DETECTOR_PROMPT = """\
-You are an SRE agent monitoring a Kubernetes cluster. Your job is to detect unhealthy pods and service-level issues in the workload namespace.
+You are an SRE agent monitoring a Kubernetes cluster. Your job is to detect unhealthy pods in the workload namespace.
 
 Workflow:
 1. Call get_pod_status for namespace "workload"
@@ -66,11 +66,9 @@ Workflow:
 3. If any pod has a failure status (CrashLoopBackOff, CreateContainerConfigError, Error, OOMKilled, ImagePullBackOff), call fix_issue with the pod name and its status
 4. If any pod shows Running but is NOT fully ready (e.g. 0/1), this indicates a failing health check — call fix_issue with the pod name and "readiness probe failing"
 5. Ignore transient states like ContainerCreating, PodInitializing, Pending, Terminating
-6. If all pods are Running with full readiness, call query_prometheus to check for service-level issues (e.g. redis connection errors, high error rates). Choose appropriate PromQL queries and time ranges
-7. If Prometheus shows active issues, call fix_issue with the details
-8. If everything is healthy, respond with exactly: ALL_HEALTHY
+6. If all pods are Running with full readiness, respond with exactly: ALL_HEALTHY
 
-Base your decisions on current state, not historical events."""
+Base your decisions on current pod status only."""
 
 FIXER_PROMPT = """\
 You are an SRE agent that diagnoses and fixes Kubernetes issues in the workload namespace.
@@ -166,7 +164,7 @@ async def _autofix_loop(interval: int):
         cycle += 1
         _log(f"🔄 Cycle {cycle}: scanning workload namespace...")
 
-        detector = Agent(model=model, tools=[get_pod_status, query_prometheus, fix_issue], system_prompt=DETECTOR_PROMPT)
+        detector = Agent(model=model, tools=[get_pod_status, fix_issue], system_prompt=DETECTOR_PROMPT)
 
         try:
             loop = asyncio.get_event_loop()
