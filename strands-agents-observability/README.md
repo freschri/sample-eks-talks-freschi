@@ -90,6 +90,7 @@ metadata:
 data:
   ECR_REPO: "${ECR_REPO}"
   IMAGE_TAG: "${GIT_SHA}"
+  AWS_REGION: "${AWS_DEFAULT_REGION}"
 EOF
 ```
 

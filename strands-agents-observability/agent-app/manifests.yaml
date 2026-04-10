@@ -60,9 +60,9 @@ spec:
             - name: MODEL_PROVIDER
               value: "bedrock"
             - name: BEDROCK_MODEL
-              value: "us.anthropic.claude-sonnet-4-20250514"
+              value: "anthropic.claude-sonnet-4-6"
             - name: AWS_REGION
-              value: "us-east-1"
+              value: "${AWS_REGION}"
             - name: VLLM_BASE_URL
               value: "http://vllm-svc.vllm:8000/v1"
             - name: VLLM_MODEL
