@@ -143,6 +143,24 @@ kubectl patch svc redis -n workload --type='json' \
 
 After each fix, re-ask the agent and check Jaeger — each diagnosis creates a new trace showing the agent peeling back the next layer.
 
+### Autonomous Mode (Auto-Fix)
+
+Instead of manually diagnosing and fixing, you can let the agent detect and fix issues autonomously:
+
+1. Click **🤖 Start Auto-Fix** in the web UI
+2. The agent scans the workload namespace every 60 seconds
+3. When it finds unhealthy pods, it calls a **fixer agent** (agent-as-tool pattern) that diagnoses the root cause and applies the fix
+4. Each cycle creates a fresh agent with clean context — no token bloat across cycles
+5. The loop stops automatically when all pods are healthy, or click **Stop**
+
+The auto-fix uses two agents:
+- **Detector Agent** — lightweight scan with `get_pod_status` + `get_events`. If it finds a problem, it calls `fix_issue`
+- **Fixer Agent** (wrapped as a `@tool`) — deeper diagnosis with logs/prometheus, then applies the fix using `kubectl_create_secret`, `kubectl_set_resources`, or `kubectl_patch_service`
+
+> **Note on FluxCD:** `inject.sh` suspends the Flux workload kustomization before injecting faults, so neither the chaos nor the agent's fixes get reverted. `verify.sh` resumes it when all checks pass.
+
+> **Production consideration:** In production, the agent should not apply fixes directly. Instead, it would commit the fix to the Git repo (or open a PR) and let FluxCD reconcile — keeping the GitOps single source of truth. A human-in-the-loop approval step on the PR adds a safety gate before changes reach the cluster.
+
 9. **Verify**:
 ```bash
 ./strands-agents-observability/chaos/verify.sh
@@ -179,7 +197,7 @@ infra (Karpenter GPU NodePool)
 ├── agent-app/
 │   ├── manifests.yaml                # K8s Deployment + Service + RBAC
 │   ├── app.py                        # FastAPI SRE agent (streaming SSE)
-│   ├── tools.py                      # 5 diagnostic tools
+│   ├── tools.py                      # 5 diagnostic + 3 fix tools
 │   ├── static/index.html             # Chat web UI
 │   ├── Dockerfile
 │   └── requirements.txt

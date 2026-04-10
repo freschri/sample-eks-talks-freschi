@@ -1,4 +1,4 @@
-"""SRE Agent — FastAPI server with streaming SSE and web UI."""
+"""SRE Agent — FastAPI server with streaming SSE, web UI, and autonomous detect-fix loop."""
 import os
 import json
 import logging
@@ -16,9 +16,12 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
 
-from strands import Agent
+from strands import Agent, tool
 from strands.models.openai import OpenAIModel
-from tools import query_prometheus, get_pod_status, get_pod_logs, get_events, describe_resource
+from tools import (
+    query_prometheus, get_pod_status, get_pod_logs, get_events, describe_resource,
+    kubectl_create_secret, kubectl_set_resources, kubectl_patch_service,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -40,7 +43,9 @@ model = OpenAIModel(
     params={"parallel_tool_calls": False},
 )
 
-ALL_TOOLS = [query_prometheus, get_pod_status, get_pod_logs, get_events, describe_resource]
+# --- Tools ---
+DIAGNOSE_TOOLS = [query_prometheus, get_pod_status, get_pod_logs, get_events, describe_resource]
+FIX_TOOLS = DIAGNOSE_TOOLS + [kubectl_create_secret, kubectl_set_resources, kubectl_patch_service]
 
 SYSTEM_PROMPT = (
     "You are an expert SRE agent. You diagnose Kubernetes application issues "
@@ -49,6 +54,96 @@ SYSTEM_PROMPT = (
     "Start with get_pod_status, then get_events, then dig deeper with get_pod_logs "
     "and query_prometheus. Be specific about root causes and suggest exact fix commands."
 )
+
+# --- Fixer agent-as-tool ---
+@tool
+def fix_issue(problem_description: str) -> str:
+    """Diagnose the root cause of a Kubernetes issue and apply a fix.
+
+    Args:
+        problem_description: Description of the problem detected.
+
+    Returns:
+        Summary of what was fixed.
+    """
+    fixer = Agent(
+        model=model,
+        tools=FIX_TOOLS,
+        system_prompt=(
+            "You are an SRE agent that fixes Kubernetes issues. "
+            "You have tools to create secrets, set resource limits, and patch services. "
+            "IMPORTANT: call only ONE tool at a time. "
+            "First diagnose the root cause using get_pod_logs, get_events, describe_resource. "
+            "Then apply the fix. Only fix in the 'workload' namespace. "
+            "After fixing, verify with get_pod_status."
+        ),
+    )
+    result = fixer(problem_description)
+    provider.force_flush()
+    return str(result)
+
+
+# --- Autonomous loop state ---
+_autofix_task = None
+_autofix_events: list[str] = []
+_autofix_running = False
+
+
+async def _autofix_loop():
+    """Autonomous detect-fix loop using agent-as-tool pattern."""
+    global _autofix_running
+    _autofix_running = True
+    _autofix_events.clear()
+
+    detector = Agent(
+        model=model,
+        tools=[get_pod_status, get_events, fix_issue],
+        system_prompt=(
+            "You are an SRE detector agent. Scan the workload namespace for unhealthy pods. "
+            "IMPORTANT: call only ONE tool at a time. "
+            "Start with get_pod_status for namespace 'workload'. "
+            "If any pod is NOT Running/Ready (e.g. CrashLoopBackOff, CreateContainerConfigError, "
+            "OOMKilled, Error), call fix_issue with a description of the problem. "
+            "If all pods are Running and Ready, respond with 'ALL_HEALTHY'."
+        ),
+    )
+
+    cycle = 0
+    while _autofix_running:
+        cycle += 1
+        _autofix_events.append(f"🔄 Cycle {cycle}: scanning...")
+        try:
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None, lambda: detector("Scan the workload namespace for issues and fix any you find.")
+            )
+            text = str(result)
+            _autofix_events.append(f"📋 Cycle {cycle}: {text[:500]}")
+            provider.force_flush()
+
+            if "ALL_HEALTHY" in text.upper():
+                _autofix_events.append(f"✅ Cycle {cycle}: All healthy. Stopping.")
+                break
+
+            # Fresh detector each cycle for clean context
+            detector = Agent(
+                model=model,
+                tools=[get_pod_status, get_events, fix_issue],
+                system_prompt=detector.system_prompt,
+            )
+        except Exception as e:
+            _autofix_events.append(f"❌ Cycle {cycle}: Error — {e}")
+            logger.exception("Autofix error")
+
+        # Wait before next scan
+        for _ in range(60):
+            if not _autofix_running:
+                break
+            await asyncio.sleep(1)
+
+    _autofix_running = False
+    _autofix_events.append("🛑 Auto-fix stopped.")
+
 
 # --- FastAPI ---
 app = FastAPI(title="SRE Agent", description="AI-powered Kubernetes diagnostics")
@@ -69,13 +164,7 @@ def _sse(event: str, data: str) -> str:
 
 async def _stream_agent(prompt: str):
     """Run agent and yield SSE events by polling agent.messages."""
-    agent = Agent(
-        model=model,
-        tools=ALL_TOOLS,
-        system_prompt=SYSTEM_PROMPT,
-    )
-
-    loop = asyncio.get_event_loop()
+    agent = Agent(model=model, tools=DIAGNOSE_TOOLS, system_prompt=SYSTEM_PROMPT)
     error_holder = {}
 
     def run_agent():
@@ -89,7 +178,6 @@ async def _stream_agent(prompt: str):
     with concurrent.futures.ThreadPoolExecutor() as pool:
         future = pool.submit(run_agent)
         last_len = 0
-
         while not future.done():
             await asyncio.sleep(0.5)
             msgs = agent.messages
@@ -98,8 +186,6 @@ async def _stream_agent(prompt: str):
                     for ev in _extract_events(msg):
                         yield ev
                 last_len = len(msgs)
-
-        # Collect any remaining messages
         future.result()
         msgs = agent.messages
         for msg in msgs[last_len:]:
@@ -108,13 +194,11 @@ async def _stream_agent(prompt: str):
 
     if "error" in error_holder:
         yield _sse("error", error_holder["error"])
-
     provider.force_flush()
     yield _sse("done", "")
 
 
 def _extract_events(msg):
-    """Extract SSE events from a single Strands message."""
     role = msg.get("role", "")
     if role == "assistant":
         for block in msg.get("content", []):
@@ -148,10 +232,31 @@ async def diagnose_stream(req: DiagnoseRequest):
 
 @app.post("/diagnose", response_model=DiagnoseResponse)
 def diagnose(req: DiagnoseRequest):
-    agent = Agent(model=model, tools=ALL_TOOLS, system_prompt=SYSTEM_PROMPT)
+    agent = Agent(model=model, tools=DIAGNOSE_TOOLS, system_prompt=SYSTEM_PROMPT)
     result = agent(req.prompt)
     provider.force_flush()
     return DiagnoseResponse(response=str(result))
+
+
+@app.post("/autofix/start")
+async def autofix_start():
+    global _autofix_task, _autofix_running
+    if _autofix_running:
+        return {"status": "already_running"}
+    _autofix_task = asyncio.create_task(_autofix_loop())
+    return {"status": "started"}
+
+
+@app.post("/autofix/stop")
+async def autofix_stop():
+    global _autofix_running
+    _autofix_running = False
+    return {"status": "stopping"}
+
+
+@app.get("/autofix/events")
+async def autofix_events():
+    return {"running": _autofix_running, "events": _autofix_events}
 
 
 @app.get("/", response_class=HTMLResponse)

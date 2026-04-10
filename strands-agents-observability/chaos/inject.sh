@@ -7,6 +7,9 @@ set -euo pipefail
 
 NS="workload"
 
+echo ">>> Suspending Flux workload kustomization (prevents auto-revert)..."
+flux suspend kustomization workload
+
 echo ">>> Layer 3: Patching redis service port to 6380 (wrong port)..."
 kubectl patch svc redis -n "$NS" --type='json' -p='[{"op":"replace","path":"/spec/ports/0/port","value":6380},{"op":"replace","path":"/spec/ports/0/targetPort","value":6380}]'
 
@@ -17,5 +20,5 @@ echo ">>> Layer 1: Deleting db-creds secret (will CrashLoop)..."
 kubectl delete secret db-creds -n "$NS" --ignore-not-found
 
 echo ""
-echo "All 3 faults injected. The app will CrashLoop."
+echo "All 3 faults injected. Flux workload kustomization suspended."
 echo "Fix order: secret → memory → redis port"
